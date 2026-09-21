@@ -197,6 +197,8 @@ class ResumeLabRefineRequest(BaseModel):
     current_resume: str = Field(min_length=50)
     job_description: str = Field(min_length=50)
     target_title: str = Field(min_length=1, max_length=500)
+    company_name: str | None = Field(default=None, max_length=255)
+    mode: Literal["HYBRID", "IMPORTANT"] = "HYBRID"
     instruction: str = Field(min_length=3, max_length=4000)
     speed: Literal["fast", "balanced", "best"] = "balanced"
     writer_provider: Literal["openrouter"] | None = None
@@ -204,10 +206,8 @@ class ResumeLabRefineRequest(BaseModel):
     target_pages: Literal[1, 2, 3] | None = None
 
 
-class ResumeLabRefineResponse(BaseModel):
-    status: Literal["REVIEWED", "FAILED"]
-    resume_text: str | None
-    events: list[GenerationEventOut]
+class ResumeLabRefineResponse(ResumeLabGenerateResponse):
+    pass
 
 
 class ResumeLabCoverLetterRequest(BaseModel):

@@ -854,8 +854,6 @@ export default function ResumeLabPage() {
   async function refineRebuiltResume(instructionOverride?: string, chipLabel?: string, markIds?: string[]) {
     const instruction = (instructionOverride ?? refineInstruction).trim();
     if (!rebuildResult || !instruction) return;
-    setGenerationRun(null);
-    setGeneratedSnapshot(null);
     setCoverLetter("");
     setRefineLoading(true);
     if (chipLabel) setActiveChipLabel(chipLabel);
@@ -866,6 +864,8 @@ export default function ResumeLabPage() {
         current_resume: rebuildResult.rebuilt_resume,
         job_description: jobDescription,
         target_title: jobTitle || jobContext,
+        company_name: jobCompany || null,
+        mode: generationMode,
         instruction,
         speed: generationSpeed,
         writer_provider: modelChoice.provider,
@@ -887,6 +887,8 @@ export default function ResumeLabPage() {
       };
       setRebuildResult(result);
       setAtsAfter(refinedAts);
+      setGenerationRun(run);
+      setGeneratedSnapshot(currentSnapshot);
       setRefineInstruction("");
       const idsToMark = markIds ?? (chipLabel ? [chipLabel] : []);
       if (idsToMark.length) {

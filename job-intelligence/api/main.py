@@ -902,10 +902,27 @@ def refine_resume_lab_resume(
             status_code=502,
             detail=f"Refinement did not produce a valid resume. {reasons}".strip(),
         )
-    return ResumeLabRefineResponse(
-        status=result.status, resume_text=result.resume_text,
-        events=[GenerationEventOut(**asdict(e)) for e in result.events],
+    input_hash = normalized_hash(
+        profile.resume_sha256 or "", payload.job_description, payload.target_title,
+        payload.company_name or "", payload.mode,
     )
+    run = ResumeLabRun(
+        id=str(uuid.uuid4()), idempotency_key=f"refine:{uuid.uuid4()}",
+        cache_key=normalized_hash(input_hash, payload.current_resume, payload.instruction),
+        profile_id=profile.id, mode=payload.mode, status=result.status,
+        source_hash=profile.resume_sha256 or normalized_hash(profile.resume_text),
+        input_hash=input_hash,
+        job_description_hash=normalized_hash(payload.job_description),
+        target_title=payload.target_title, company_name=payload.company_name,
+        content_text=result.resume_text, ats_score=result.ats_score,
+        events=[asdict(event) for event in result.events],
+        usage={**result.usage, "attempts": result.attempts},
+        original_titles=result.original_titles, error=None,
+    )
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+    return _resume_lab_run_response(run)
 
 
 @app.post("/resume-lab/cover-letter", response_model=CoverLetterResponse)

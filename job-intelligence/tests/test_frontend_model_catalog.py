@@ -38,3 +38,16 @@ def test_resume_lab_refinement_never_replaces_a_higher_scoring_resume():
 
     assert "refinedAts.score < currentAts.score" in page
     assert "Kept the higher-scoring resume" in page
+
+
+def test_refined_resume_keeps_cover_letter_generation_enabled():
+    page = (
+        Path(__file__).parents[1] / "frontend/app/resume-lab/page.tsx"
+    ).read_text(encoding="utf-8")
+    refine_flow = page.split("async function refineRebuiltResume", 1)[1].split(
+        "// Data-driven refine suggestions", 1
+    )[0]
+
+    assert "setGenerationRun(null)" not in refine_flow
+    assert "setGenerationRun(run)" in refine_flow
+    assert "setGeneratedSnapshot(currentSnapshot)" in refine_flow

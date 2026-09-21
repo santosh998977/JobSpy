@@ -208,11 +208,12 @@ export function generateResumeLabCoverLetter(payload: {
 
 export function refineResumeLabResume(payload: {
   profile_id: number; current_resume: string; job_description: string;
-  target_title: string; instruction: string;
+  target_title: string; company_name?: string | null; mode?: ResumeGenerationMode;
+  instruction: string;
   speed?: ResumeGenerationSpeed; writer_provider?: string | null;
   writer_model?: string | null; target_pages?: number | null;
 }) {
-  return request<{ status: string; resume_text: string | null; events: ResumeLabRunResult["events"] }>(
+  return request<ResumeLabRunResult>(
     "/resume-lab/refine", { method: "POST", body: JSON.stringify(payload) }, 300_000,
   );
 }
