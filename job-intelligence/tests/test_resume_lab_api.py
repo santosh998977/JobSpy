@@ -13,6 +13,32 @@ from storage.models import Base
 from storage.repository import JobRepository
 
 
+def test_cover_letter_uses_paid_openrouter_gemini(monkeypatch):
+    from api import main
+
+    calls = []
+
+    def fake_completion(*, provider, messages, settings):
+        calls.append((provider, messages))
+        return "Dear Hiring Manager,\n\nI build reliable software."
+
+    monkeypatch.setattr("ai.resume_rebuilder._chat_completion", fake_completion)
+    monkeypatch.setattr(main.settings, "openrouter_api_key", "paid-openrouter-key")
+
+    result = main._gemini_cover_letter_from_run(
+        generated_resume="Engineer with Python and Azure experience.",
+        job_description="Seeking an engineer with Python and Azure experience.",
+        target_title="Software Engineer",
+        company_name="Example",
+    )
+
+    assert result.provider == "openrouter"
+    assert result.model == "google/gemini-3.1-pro-preview"
+    assert calls[0][0]["name"] == "openrouter"
+    assert calls[0][0]["api_key"] == "paid-openrouter-key"
+    assert "proven track record" in calls[0][1][0]["content"].lower()
+
+
 def test_generation_is_cached_for_identical_inputs(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)

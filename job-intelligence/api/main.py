@@ -26,6 +26,7 @@ from ai.resume_keyword_plan import extract_target_title, normalized_hash
 from ai.resume_orchestrator import (
     GenerationMode,
     OrchestrationRequest,
+    PAID_GEMINI_MODEL,
     RefineRequest,
     orchestrate_resume,
     refine_resume,
@@ -832,38 +833,34 @@ def _gemini_cover_letter_from_run(
 
     prompt = (
         "Write a concise, natural 3-4 paragraph cover letter in plain text. "
-        "Use only facts present in the generated resume. Do not use bullet points or AI filler.\n\n"
+        "Use only facts present in the generated resume. Do not use bullet points or AI filler. "
+        "Use concrete details, varied sentence lengths, and a direct professional tone. "
+        "Avoid clichés such as thrilled, excited, passionate, leverage, utilize, synergy, "
+        "dynamic, cutting-edge, and proven track record. Never invent metrics.\n\n"
         f"TARGET TITLE: {target_title}\nCOMPANY: {company_name or 'Not specified'}\n\n"
         f"JOB DESCRIPTION:\n{job_description}\n\nGENERATED REVIEWED RESUME:\n{generated_resume}"
     )
-    failures: list[str] = []
-    for index, key in enumerate(settings.gemini_api_keys, start=1):
-        provider = {
-            "name": "gemini", "base_url": settings.gemini_base_url,
-            "api_key": key, "model": settings.gemini_model,
-            "key_index": str(index),
-        }
-        try:
-            text = _chat_completion(
-                provider=provider,
-                messages=[{"role": "user", "content": prompt}],
-                settings=settings,
-            )
-            return CoverLetterResponse(
-                provider=f"gemini (key {index})", model=settings.gemini_model,
-                cover_letter=text.strip(),
-            )
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code not in (408, 429) and exc.response.status_code < 500:
-                raise HTTPException(status_code=502, detail="Gemini rejected the cover-letter request") from exc
-            failures.append(f"key {index}: temporary failure")
-        except (httpx.TimeoutException, httpx.ConnectError):
-            failures.append(f"key {index}: temporary failure")
-    if not settings.gemini_api_keys:
-        raise HTTPException(status_code=503, detail="No Gemini key is configured")
-    raise HTTPException(
-        status_code=503,
-        detail="All Gemini keys failed temporarily. OpenRouter was not called.",
+    provider = {
+        "name": "openrouter", "base_url": settings.openrouter_base_url,
+        "api_key": settings.openrouter_api_key or "", "model": PAID_GEMINI_MODEL,
+    }
+    if not provider["api_key"]:
+        raise HTTPException(status_code=503, detail="OpenRouter is not configured")
+    try:
+        text = _chat_completion(
+            provider=provider,
+            messages=[{"role": "user", "content": prompt}],
+            settings=settings,
+        )
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        temporary = status in (408, 429) or status >= 500
+        detail = "Paid Gemini is temporarily unavailable" if temporary else "Paid Gemini rejected the cover-letter request"
+        raise HTTPException(status_code=503 if temporary else 502, detail=detail) from exc
+    except (httpx.TimeoutException, httpx.ConnectError) as exc:
+        raise HTTPException(status_code=503, detail="Paid Gemini is temporarily unavailable") from exc
+    return CoverLetterResponse(
+        provider="openrouter", model=PAID_GEMINI_MODEL, cover_letter=text.strip()
     )
 
 

@@ -873,13 +873,20 @@ export default function ResumeLabPage() {
         target_pages: targetPages === "full" ? null : Number(targetPages),
       });
       if (!run.resume_text) throw new Error("Refinement did not return a resume.");
+      const currentAts = computeAts(rebuildResult.rebuilt_resume, jobDescription);
+      const refinedAts = computeAts(run.resume_text, jobDescription);
+      if (refinedAts.score < currentAts.score) {
+        setAtsAfter(currentAts);
+        toast.warning("Kept the higher-scoring resume; this refinement lowered its ATS score.");
+        return;
+      }
       const result: ResumeRebuildResult = {
         ...rebuildResult,
         model: run.events.filter((e) => e.model).at(-1)?.model ?? rebuildResult.model,
         rebuilt_resume: run.resume_text,
       };
       setRebuildResult(result);
-      setAtsAfter(computeAts(result.rebuilt_resume, jobDescription));
+      setAtsAfter(refinedAts);
       setRefineInstruction("");
       const idsToMark = markIds ?? (chipLabel ? [chipLabel] : []);
       if (idsToMark.length) {

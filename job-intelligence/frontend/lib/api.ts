@@ -269,41 +269,9 @@ export function resumeModelChoices(): ResumeModelChoice[] {
 export function resumeLabModelChoices(): ResumeLabModelChoice[] {
   return [
     {
-      id: "haiku-fast", provider: "omniroute",
-      model: "no-think/claude/claude-haiku-4-5-20251001",
-      label: "Claude Haiku 4.5", cost: "Free", pace: "Fast", speed: "fast",
-      note: "Quickest. Single review pass, no ATS repair.",
-    },
-    {
-      id: "gemini3-flash", provider: "omniroute", model: "gemini/gemini-3-flash-preview",
-      label: "Gemini 3 Flash", cost: "Free", pace: "Fast", speed: "fast",
-      note: "Fastest full-length draft (~10s). No ATS repair pass.",
-    },
-    {
-      id: "gemini31-flash-lite", provider: "omniroute", model: "gemini/gemini-3.1-flash-lite",
-      label: "Gemini 3.1 Flash Lite", cost: "Free", pace: "Fast", speed: "fast",
-      note: "Very fast, shorter output. No ATS repair pass.",
-    },
-    {
-      id: "glm-fast", provider: "nvidia", model: "z-ai/glm-5.2",
-      label: "NVIDIA GLM-5.2", cost: "Free", pace: "Fast", speed: "fast",
-      note: "Free NVIDIA writer. No ATS repair pass.",
-    },
-    {
-      id: "sonnet-balanced", provider: "omniroute",
-      model: "no-think/claude/claude-sonnet-5",
-      label: "Claude Sonnet 5", cost: "Free", pace: "Medium", speed: "balanced",
-      note: "Recommended. Strong prose, one ATS repair pass.",
-    },
-    {
-      id: "sonnet-thinking", provider: "omniroute", model: "claude/claude-sonnet-5",
-      label: "Claude Sonnet 5 (thinking)", cost: "Free", pace: "Slow", speed: "best",
-      note: "Extended reasoning, up to two ATS repair passes.",
-    },
-    {
-      id: "opus-best", provider: "omniroute", model: "claude/claude-opus-5",
-      label: "Claude Opus 5", cost: "Free", pace: "Slow", speed: "best",
-      note: "Highest quality, slowest. Two ATS repair passes.",
+      id: "gemini-3.1-pro", provider: "openrouter", model: "google/gemini-3.1-pro-preview",
+      label: "Google Gemini 3.1 Pro", cost: "Paid", pace: "Medium", speed: "best",
+      note: "Google Gemini billed through OpenRouter credits.",
     },
     {
       id: "deepseek-v4.1-flash", provider: "openrouter", model: "deepseek/deepseek-v4.1-flash",

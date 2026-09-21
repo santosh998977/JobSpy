@@ -1,4 +1,6 @@
 import httpx
+import pytest
+from pydantic import ValidationError
 
 from ai.resume_orchestrator import (
     GenerationMode,
@@ -7,6 +9,7 @@ from ai.resume_orchestrator import (
     orchestrate_resume,
 )
 from storage.config import Settings
+from api.schemas import ResumeLabGenerateRequest
 
 
 BASE_RESUME = """Santosh Mulakidi
@@ -41,6 +44,7 @@ JD = "AI Engineer requiring Python, Azure, REST API, LangChain, and Kubernetes."
 def settings(*, repairs=0):
     return Settings(
         _env_file=None,
+        gemini_api_key="gemini",
         nvidia_api_key="nv",
         openrouter_api_key="or",
         nvidia_resume_writer_model="nvidia/nemotron-3-ultra-550b-a55b",
@@ -84,15 +88,48 @@ class FakeCompletion:
         return BASE_RESUME
 
 
-def test_balanced_writes_on_omniroute_then_reviews_with_claude_haiku():
+def test_resume_generation_only_uses_paid_providers():
+    fake = FakeCompletion()
+    orchestrate_resume(request(), settings(), completion=fake)
+    assert {provider["name"] for provider in fake.providers} == {"openrouter"}
+
+
+def test_google_gemini_uses_the_paid_openrouter_route():
+    fake = FakeCompletion()
+    orchestrate_resume(
+        _request_with_model("openrouter", "google/gemini-3.1-pro-preview", speed="best"),
+        settings(), completion=fake,
+    )
+    assert fake.providers[0]["name"] == "openrouter"
+    assert fake.models[0] == "google/gemini-3.1-pro-preview"
+
+
+def test_resume_lab_request_rejects_free_provider():
+    with pytest.raises(ValidationError):
+        ResumeLabGenerateRequest(
+            profile_id=1, source_version=1, mode="HYBRID",
+            writer_provider="omniroute", writer_model="auto/best-free",
+            job_description="A sufficiently detailed job description for validation.",
+            idempotency_key="1234567890abcdef",
+        )
+
+
+def test_balanced_writes_and_reviews_on_paid_openrouter():
     fake = FakeCompletion()
     result = orchestrate_resume(request(), settings(), completion=fake)
-    assert fake.models == [
-        "no-think/claude/claude-sonnet-5",
-        "no-think/claude/claude-haiku-4-5-20251001",
-    ]
+    assert fake.models == ["deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3"]
     assert result.status == "REVIEWED"
     assert "LangChain" in fake.prompts[0]  # explicitly marked unsupported
+
+
+def test_resume_prompts_require_specific_natural_language():
+    fake = FakeCompletion()
+    orchestrate_resume(request(), settings(), completion=fake)
+    prompt = fake.prompts[0].lower()
+
+    assert "proven track record" in prompt
+    assert "vary sentence and bullet openings" in prompt
+    assert "never fabricate metrics" in prompt
 
 
 def test_balanced_never_calls_nemotron_ultra():
@@ -101,25 +138,23 @@ def test_balanced_never_calls_nemotron_ultra():
     assert "nvidia/nemotron-3-ultra-550b-a55b" not in fake.models
 
 
-def test_balanced_writer_failure_falls_back_to_free_nvidia():
-    fake = FakeCompletion(failures=("no-think/claude/claude-sonnet-5",))
+def test_balanced_writer_failure_falls_back_to_another_paid_model():
+    fake = FakeCompletion(failures=("deepseek/deepseek-v4.1-flash",))
     result = orchestrate_resume(request(), settings(), completion=fake)
     assert fake.models == [
-        "no-think/claude/claude-sonnet-5",
-        "z-ai/glm-5.2",
-        "no-think/claude/claude-haiku-4-5-20251001",
+        "deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3", "z-ai/glm-5.3",
     ]
     assert result.status == "REVIEWED"
     assert "WRITER_FALLBACK" in result.event_codes
 
 
-def test_fast_uses_free_nvidia_writer_and_skips_repairs():
+def test_fast_uses_paid_writer_and_skips_repairs():
     fake = FakeCompletion()
     result = orchestrate_resume(
         request(speed="fast"), settings(repairs=2), completion=fake,
         score_fn=lambda _resume, _jd: 40,
     )
-    assert fake.models == ["z-ai/glm-5.2", "no-think/claude/claude-haiku-4-5-20251001"]
+    assert fake.models == ["deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3"]
     assert result.attempts == 1
     assert "ATS_REPAIR_STARTED" not in result.event_codes
 
@@ -131,13 +166,17 @@ def test_best_uses_thinking_writer_and_allows_two_repairs():
         request(speed="best"), settings(repairs=2), completion=fake,
         score_fn=lambda _resume, _jd: next(scores),
     )
-    assert fake.models[0] == "claude/claude-sonnet-5"
+    assert fake.models[0] == "deepseek/deepseek-v4.1-flash"
     assert result.attempts == 3
     assert "ATS_TARGET_NOT_REACHED" in result.event_codes
 
 
 def test_all_writers_failing_is_a_visible_final_failure():
-    fake = FakeCompletion(failures=("z-ai/glm-5.2", "no-think/claude/claude-sonnet-5"))
+    fake = FakeCompletion(failures=(
+        "deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3",
+        "moonshotai/kimi-k2.6", "qwen/qwen3.8-max-0902",
+        "google/gemini-3.1-pro-preview",
+    ))
     result = orchestrate_resume(request(speed="fast"), settings(), completion=fake)
     assert result.status == "FAILED"
     assert result.resume_text is None
@@ -145,7 +184,7 @@ def test_all_writers_failing_is_a_visible_final_failure():
 
 
 def test_reviewer_falls_back_before_giving_up():
-    fake = FakeCompletion(failures=("no-think/claude/claude-haiku-4-5-20251001",))
+    fake = FakeCompletion(failures=("z-ai/glm-5.3",))
     result = orchestrate_resume(request(), settings(), completion=fake)
     assert result.status == "REVIEWED"
     assert "REVIEWER_FALLBACK" in result.event_codes
@@ -153,9 +192,8 @@ def test_reviewer_falls_back_before_giving_up():
 
 def test_both_reviewers_failing_is_not_success():
     fake = FakeCompletion(failures=(
-        "no-think/claude/claude-haiku-4-5-20251001",
-        "no-think/claude/claude-sonnet-5",
         "z-ai/glm-5.3",
+        "google/gemini-3.1-pro-preview",
     ))
     result = orchestrate_resume(request(speed="fast"), settings(), completion=fake)
     assert result.status == "WRITER_ONLY"
@@ -211,19 +249,19 @@ def _request_with_model(provider, model, speed="balanced"):
 def test_selected_writer_model_leads_the_chain():
     fake = FakeCompletion()
     orchestrate_resume(
-        _request_with_model("omniroute", "claude/claude-opus-5"),
+        _request_with_model("openrouter", "google/gemini-3.1-pro-preview"),
         settings(), completion=fake,
     )
-    assert fake.models[0] == "claude/claude-opus-5"
+    assert fake.models[0] == "google/gemini-3.1-pro-preview"
 
 
 def test_selected_writer_falls_back_to_the_tier_chain():
-    fake = FakeCompletion(failures=("claude/claude-opus-5",))
+    fake = FakeCompletion(failures=("anthropic/claude-sonnet-4.5",))
     result = orchestrate_resume(
-        _request_with_model("omniroute", "claude/claude-opus-5"),
+        _request_with_model("openrouter", "anthropic/claude-sonnet-4.5"),
         settings(), completion=fake,
     )
-    assert fake.models[:2] == ["claude/claude-opus-5", "no-think/claude/claude-sonnet-5"]
+    assert fake.models[:2] == ["anthropic/claude-sonnet-4.5", "deepseek/deepseek-v4.1-flash"]
     assert result.status == "REVIEWED"
 
 
@@ -245,19 +283,19 @@ def test_openrouter_writer_uses_requested_high_reasoning_fallback_order():
 
 
 def test_selected_model_is_not_duplicated_in_the_chain():
-    fake = FakeCompletion(failures=("no-think/claude/claude-sonnet-5",))
+    fake = FakeCompletion(failures=("deepseek/deepseek-v4.1-flash",))
     orchestrate_resume(
-        _request_with_model("omniroute", "no-think/claude/claude-sonnet-5"),
+        _request_with_model("openrouter", "deepseek/deepseek-v4.1-flash"),
         settings(), completion=fake,
     )
-    writer_calls = [m for m in fake.models if m == "no-think/claude/claude-sonnet-5"]
+    writer_calls = [m for m in fake.models if m == "deepseek/deepseek-v4.1-flash"]
     assert len(writer_calls) == 1
 
 
 def test_no_selected_model_keeps_the_tier_default():
     fake = FakeCompletion()
     orchestrate_resume(request(), settings(), completion=fake)
-    assert fake.models[0] == "no-think/claude/claude-sonnet-5"
+    assert fake.models[0] == "deepseek/deepseek-v4.1-flash"
 
 
 def _paged_request(pages):
@@ -313,21 +351,18 @@ def _refine(instruction="Shorten the summary.", **kw):
 def test_refine_uses_the_chosen_model_then_the_reviewer_chain():
     fake = FakeCompletion()
     result = refine_resume(
-        _refine(writer_provider="omniroute", writer_model="claude/claude-opus-5"),
+        _refine(writer_provider="openrouter", writer_model="google/gemini-3.1-pro-preview"),
         settings(), completion=fake,
     )
-    assert fake.models == ["claude/claude-opus-5"]
+    assert fake.models == ["google/gemini-3.1-pro-preview"]
     assert result.status == "REVIEWED"
     assert "REFINE_SUCCEEDED" in result.event_codes
 
 
 def test_refine_falls_back_when_a_provider_fails():
-    fake = FakeCompletion(failures=("no-think/claude/claude-haiku-4-5-20251001",))
+    fake = FakeCompletion(failures=("z-ai/glm-5.3",))
     result = refine_resume(_refine(), settings(), completion=fake)
-    assert fake.models == [
-        "no-think/claude/claude-haiku-4-5-20251001",
-        "no-think/claude/claude-sonnet-5",
-    ]
+    assert fake.models == ["z-ai/glm-5.3", "google/gemini-3.1-pro-preview"]
     assert result.status == "REVIEWED"
 
 
@@ -341,6 +376,37 @@ FULL_RESUME = BASE_RESUME.replace(
         "covering validation, retries, and production support." for n in range(1, 9)
     ),
 )
+
+
+def test_refine_keeps_current_resume_when_candidate_score_drops():
+    lower_scoring_resume = (
+        FULL_RESUME.replace("Python", "software")
+        .replace("Azure", "cloud")
+        .replace("REST", "web")
+        .replace("C#", "application")
+        .replace(".NET", "platform")
+    )
+
+    class LowerScore(FakeCompletion):
+        def __call__(self, provider, messages):
+            self.models.append(provider["model"])
+            self.prompts.append(messages[-1]["content"])
+            return lower_scoring_resume
+
+    result = refine_resume(
+        RefineRequest(
+            source_resume=FULL_RESUME, current_resume=FULL_RESUME,
+            job_description=JD, target_title="AI Engineer",
+            instruction="Make the wording more natural.",
+        ),
+        settings(), completion=LowerScore(),
+        score_fn=lambda resume, _jd: 90 if resume == FULL_RESUME else 60,
+    )
+
+    assert result.status == "REVIEWED"
+    assert result.resume_text == FULL_RESUME
+    assert "REFINE_SCORE_DROPPED" in result.event_codes
+    assert "REFINE_KEPT_CURRENT" in result.event_codes
 
 
 def test_refine_rejects_output_that_invents_numbers():

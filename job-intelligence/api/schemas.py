@@ -171,7 +171,7 @@ class ResumeLabGenerateRequest(BaseModel):
     mode: Literal["HYBRID", "IMPORTANT"]
     speed: Literal["fast", "balanced", "best"] = "balanced"
     target_pages: Literal[1, 2, 3] | None = None
-    writer_provider: str | None = Field(default=None, max_length=40)
+    writer_provider: Literal["openrouter"] | None = None
     writer_model: str | None = Field(default=None, max_length=160)
     job_description: str = Field(min_length=50)
     target_title: str | None = Field(default=None, max_length=500)
@@ -199,7 +199,7 @@ class ResumeLabRefineRequest(BaseModel):
     target_title: str = Field(min_length=1, max_length=500)
     instruction: str = Field(min_length=3, max_length=4000)
     speed: Literal["fast", "balanced", "best"] = "balanced"
-    writer_provider: str | None = Field(default=None, max_length=40)
+    writer_provider: Literal["openrouter"] | None = None
     writer_model: str | None = Field(default=None, max_length=160)
     target_pages: Literal[1, 2, 3] | None = None
 
