@@ -171,6 +171,7 @@ export function createResumeLabProfile(name: string) {
 export function saveResumeLabResume(profileId: number, payload: {
   resume_text: string; resume_filename?: string | null;
   expected_source_version: number; only_if_empty?: boolean;
+  verified_experience_notes?: string;
 }) {
   return request<ResumeLabProfile>(`/resume-lab/profiles/${profileId}/resume`, {
     method: "PUT", body: JSON.stringify(payload),
@@ -182,6 +183,18 @@ export function removeResumeLabResume(profileId: number, sourceVersion: number) 
     `/resume-lab/profiles/${profileId}/resume?expected_source_version=${sourceVersion}`,
     { method: "DELETE" },
   );
+}
+
+export function getResumeLabGaps(payload: {
+  profile_id: number;
+  source_version: number;
+  job_description: string;
+  target_title?: string | null;
+}) {
+  return request<{ missing_keywords: string[] }>("/resume-lab/gaps", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function generateResumeLabResume(payload: {

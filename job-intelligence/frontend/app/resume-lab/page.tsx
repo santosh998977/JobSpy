@@ -6,12 +6,13 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { AppShell } from "@/components/layout/app-shell";
+import { ExperienceCheckpoint } from "@/components/resume-lab/experience-checkpoint";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { createResumeLabProfile, exportCoverLetterDocx, exportResumeDocx, generateResumeLabCoverLetter, generateResumeLabResume, getJob, getJobs, getResumeLabProfiles, parseResume, rebuildResume, refineResumeLabResume, resumeLabModelChoices, removeResumeLabResume, saveResumeLabResume } from "@/lib/api";
+import { createResumeLabProfile, exportCoverLetterDocx, exportResumeDocx, generateResumeLabCoverLetter, generateResumeLabResume, getJob, getJobs, getResumeLabGaps, getResumeLabProfiles, parseResume, rebuildResume, refineResumeLabResume, resumeLabModelChoices, removeResumeLabResume, saveResumeLabResume } from "@/lib/api";
 import { loadProfiles } from "@/lib/job-profiles";
 import type { ResumeGenerationMode, ResumeGenerationSpeed, ResumeLabProfile, ResumeLabRunResult, ResumeRebuildResult } from "@/types/job";
 
@@ -516,6 +517,10 @@ export default function ResumeLabPage() {
   const [returnTo, setReturnTo] = useState<string | null>(null);
   const [rebuildLoading, setRebuildLoading] = useState(false);
   const [rebuildResult, setRebuildResult] = useState<ResumeRebuildResult | null>(null);
+  const [checkpointOpen, setCheckpointOpen] = useState(false);
+  const [missingKeywords, setMissingKeywords] = useState<string[]>([]);
+  const [experienceNotes, setExperienceNotes] = useState("");
+  const [checkpointSaving, setCheckpointSaving] = useState(false);
   const modelChoices = resumeLabModelChoices();
   const [modelChoiceId, setModelChoiceId] = useState<string>("deepseek-v4.1-flash");
   const [targetPages, setTargetPages] = useState<string>("2");
@@ -617,6 +622,7 @@ export default function ResumeLabPage() {
       setProfiles(serverProfiles);
       setProfileId(serverProfiles[0]?.id ?? null);
       setResumeText(serverProfiles[0]?.resume_text ?? "");
+      setExperienceNotes(serverProfiles[0]?.verified_experience_notes ?? "");
     }
     void loadCentralProfiles().catch((error) => {
       toast.error(error instanceof Error ? error.message : "Could not load Resume Lab profiles");
@@ -712,6 +718,7 @@ export default function ResumeLabPage() {
     const nextProfile = profiles.find((profile) => profile.id === numericId);
     setProfileId(numericId);
     setResumeText(nextProfile?.resume_text ?? "");
+    setExperienceNotes(nextProfile?.verified_experience_notes ?? "");
     setGenerationRun(null);
     setCoverLetter("");
   }
@@ -724,6 +731,7 @@ export default function ResumeLabPage() {
       setProfiles((current) => [...current, created]);
       setProfileId(created.id);
       setResumeText("");
+      setExperienceNotes("");
       setGenerationRun(null);
       setCoverLetter("");
       toast.success("Profile created");
@@ -740,6 +748,7 @@ export default function ResumeLabPage() {
         resume_filename: filename ?? activeProfile.resume_filename,
         expected_source_version: activeProfile.source_version,
         only_if_empty: onlyIfEmpty,
+        verified_experience_notes: experienceNotes.trim(),
       });
       setProfiles((current) => current.map((item) => item.id === saved.id ? saved : item));
       setGenerationRun(null);
@@ -786,20 +795,7 @@ export default function ResumeLabPage() {
     }
   }
 
-  async function rebuildTailoredResume() {
-    if (resumeText.trim().length < 50) {
-      toast.error("Attach or paste your base resume first");
-      return;
-    }
-    if (jobDescription.trim().length < 50) {
-      toast.error("Add a job description first");
-      return;
-    }
-    if (activeProfile && resumeText.trim() !== (activeProfile.resume_text ?? "").trim()) {
-      toast.error("Save the edited resume before generating");
-      return;
-    }
-
+  async function startGeneration(profile: ResumeLabProfile) {
     setRebuildLoading(true);
     setRebuildResult(null);
     setAtsBefore(null);
@@ -807,11 +803,10 @@ export default function ResumeLabPage() {
     setCompletedSuggestionIds([]);
     setCoverLetter("");
     try {
-      if (!activeProfile) throw new Error("Select a profile first");
       const before = computeAts(resumeText, jobDescription);
       const run = await generateResumeLabResume({
-        profile_id: activeProfile.id,
-        source_version: activeProfile.source_version,
+        profile_id: profile.id,
+        source_version: profile.source_version,
         mode: generationMode,
         speed: generationSpeed,
         writer_provider: modelChoice.provider,
@@ -835,7 +830,7 @@ export default function ResumeLabPage() {
         prompt: "",
       };
       setRebuildResult(result);
-      setGeneratedSnapshot(JSON.stringify([activeProfile.id, activeProfile.source_version, jobDescription, jobTitle, jobCompany, generationMode, generationSpeed, modelChoiceId, targetPages]));
+      setGeneratedSnapshot(JSON.stringify([profile.id, profile.source_version, jobDescription, jobTitle, jobCompany, generationMode, generationSpeed, modelChoiceId, targetPages]));
       setAtsBefore(before);
       const after = computeAts(result.rebuilt_resume, jobDescription);
       setAtsAfter(after);
@@ -848,6 +843,66 @@ export default function ResumeLabPage() {
       toast.error(error instanceof Error ? error.message : "Resume rebuild failed");
     } finally {
       setRebuildLoading(false);
+    }
+  }
+
+  async function rebuildTailoredResume() {
+    if (resumeText.trim().length < 50) {
+      toast.error("Attach or paste your base resume first");
+      return;
+    }
+    if (jobDescription.trim().length < 50) {
+      toast.error("Add a job description first");
+      return;
+    }
+    if (!activeProfile) {
+      toast.error("Select a profile first");
+      return;
+    }
+    if (resumeText.trim() !== (activeProfile.resume_text ?? "").trim()) {
+      toast.error("Save the edited resume before generating");
+      return;
+    }
+    setRebuildLoading(true);
+    try {
+      const gaps = await getResumeLabGaps({
+        profile_id: activeProfile.id,
+        source_version: activeProfile.source_version,
+        job_description: jobDescription,
+        target_title: jobTitle || null,
+      });
+      if (gaps.missing_keywords.length) {
+        setMissingKeywords(gaps.missing_keywords);
+        setCheckpointOpen(true);
+        return;
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not check missing keywords");
+      return;
+    } finally {
+      setRebuildLoading(false);
+    }
+    await startGeneration(activeProfile);
+  }
+
+  async function saveVerifiedNotes(generate = false) {
+    if (!activeProfile) return;
+    setCheckpointSaving(true);
+    try {
+      const saved = await saveResumeLabResume(activeProfile.id, {
+        resume_text: activeProfile.resume_text ?? resumeText,
+        resume_filename: activeProfile.resume_filename,
+        expected_source_version: activeProfile.source_version,
+        verified_experience_notes: experienceNotes.trim(),
+      });
+      setProfiles((current) => current.map((item) => item.id === saved.id ? saved : item));
+      setCheckpointOpen(false);
+      toast.success("Verified experience saved");
+      if (generate) await startGeneration(saved);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save verified experience");
+    } finally {
+      setCheckpointSaving(false);
     }
   }
 
@@ -1128,6 +1183,20 @@ export default function ResumeLabPage() {
               <summary className="cursor-pointer text-sm font-medium">Resume editor</summary>
               <Textarea value={resumeText} onChange={(event) => setResumeText(event.target.value)} placeholder="Upload or paste your base resume..." className="mt-3 min-h-40 max-h-72" />
               {activeProfile?.resume_filename ? <p className="mt-2 text-xs text-muted-foreground">Saved file: {activeProfile.resume_filename}</p> : null}
+            </details>
+            <details className="rounded-lg border p-3">
+              <summary className="cursor-pointer text-sm font-medium">Verified experience notes</summary>
+              <Textarea
+                value={experienceNotes}
+                onChange={(event) => setExperienceNotes(event.target.value)}
+                maxLength={6000}
+                placeholder="Add truthful experience that is missing from the uploaded resume."
+                className="mt-3 min-h-32"
+              />
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">{experienceNotes.length}/6000 characters</p>
+                <Button variant="outline" onClick={() => void saveVerifiedNotes()} disabled={checkpointSaving || !activeProfile?.resume_text}>Save notes</Button>
+              </div>
             </details>
             <div className="flex flex-wrap gap-2">
               <Button onClick={() => void saveActiveProfile()}><Save className="h-4 w-4" /> Save profile</Button>
@@ -1584,6 +1653,19 @@ export default function ResumeLabPage() {
             )}
           </CardContent>
         </Card>
+        <ExperienceCheckpoint
+          open={checkpointOpen}
+          keywords={missingKeywords}
+          notes={experienceNotes}
+          saving={checkpointSaving}
+          onNotesChange={setExperienceNotes}
+          onSaveAndGenerate={() => void saveVerifiedNotes(true)}
+          onContinue={() => {
+            setCheckpointOpen(false);
+            if (activeProfile) void startGeneration(activeProfile);
+          }}
+          onCancel={() => setCheckpointOpen(false)}
+        />
       </div>
     </AppShell>
   );
