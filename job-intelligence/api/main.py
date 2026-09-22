@@ -701,6 +701,7 @@ def save_resume_lab_profile_resume(
             resume_filename=payload.resume_filename,
             expected_source_version=payload.expected_source_version,
             only_if_empty=payload.only_if_empty,
+            verified_experience_notes=payload.verified_experience_notes,
         )
         session.commit()
         session.refresh(profile)

@@ -323,6 +323,7 @@ class ResumeLabProfile(Base):
     resume_filename: Mapped[str | None] = mapped_column(String(255))
     resume_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
     fact_inventory: Mapped[dict | None] = mapped_column(JSON)
+    verified_experience_notes: Mapped[str | None] = mapped_column(Text)
     source_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(

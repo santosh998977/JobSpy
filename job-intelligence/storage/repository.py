@@ -86,6 +86,7 @@ class JobRepository:
         resume_filename: str | None,
         expected_source_version: int,
         only_if_empty: bool,
+        verified_experience_notes: str | None = None,
     ) -> ResumeLabProfile:
         profile = self.get_resume_lab_profile(profile_id)
         if profile is None:
@@ -101,6 +102,8 @@ class JobRepository:
         profile.resume_filename = resume_filename
         profile.resume_sha256 = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         profile.fact_inventory = None
+        if verified_experience_notes is not None:
+            profile.verified_experience_notes = verified_experience_notes.strip()
         profile.source_version += 1
         profile.updated_at = utc_now()
         self.session.flush()

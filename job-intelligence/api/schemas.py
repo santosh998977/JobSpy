@@ -140,6 +140,7 @@ class ResumeLabResumeUpdate(BaseModel):
     resume_filename: str | None = Field(default=None, max_length=255)
     expected_source_version: int = Field(ge=0)
     only_if_empty: bool = False
+    verified_experience_notes: str | None = Field(default=None, max_length=6000)
 
 
 class ResumeLabProfileOut(BaseModel):
@@ -148,10 +149,16 @@ class ResumeLabProfileOut(BaseModel):
     resume_text: str | None
     resume_filename: str | None
     resume_sha256: str | None
+    verified_experience_notes: str = ""
     source_version: int
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("verified_experience_notes", mode="before")
+    @classmethod
+    def _empty_verified_notes(cls, value: str | None) -> str:
+        return value or ""
 
 
 class GenerationEventOut(BaseModel):
