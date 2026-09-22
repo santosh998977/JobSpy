@@ -324,7 +324,7 @@ def test_rebuild_resume_repairs_collapsed_required_sections(monkeypatch):
     assert "KEYWORD GAPS" not in result.rebuilt_resume
 
 
-def test_resume_docx_uses_canonical_technical_skills_table():
+def test_resume_docx_uses_generated_technical_skills_table():
     docx_bytes = build_resume_docx(
         """
 SANTOSH MULAKIDI
@@ -349,12 +349,10 @@ August 2024 - Present
 
     document = Document(io.BytesIO(docx_bytes))
 
-    table = next(table for table in document.tables if table.cell(0, 0).text == "Languages")
-    assert len(table.rows) == 9
-    assert table.cell(0, 0).text == "Languages"
-    assert table.cell(0, 1).text == "C#, TypeScript, JavaScript, Python, T-SQL, PowerShell"
-    assert table.cell(1, 0).paragraphs[0].runs[0].bold is True
-    assert table.cell(1, 1).text.startswith(".NET 6/7/8, ASP.NET Core Web API")
+    table = next(table for table in document.tables if table.cell(0, 0).text == ".NET")
+    assert len(table.rows) == 1
+    assert table.cell(0, 0).paragraphs[0].runs[0].bold is True
+    assert table.cell(0, 1).text == "C#, ASP.NET Core"
 
 
 def test_rebuild_resume_returns_prompt_only_without_keys(monkeypatch):

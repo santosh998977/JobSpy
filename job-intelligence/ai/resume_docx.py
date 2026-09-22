@@ -25,18 +25,6 @@ _SECTION_WORDS = (
     "awards", "publications", "languages", "keyword gaps", "interests",
 )
 
-_TECHNICAL_SKILL_ROWS = (
-    ("Languages", "C#, TypeScript, JavaScript, Python, T-SQL, PowerShell"),
-    ("Backend",   ".NET 6/7/8, ASP.NET Core Web API, Entity Framework Core, REST APIs, Microservices, gRPC, WCF"),
-    ("Frontend",  "React 18 (Hooks, Redux Toolkit), Angular, TypeScript, HTML5, CSS3, Bootstrap, SASS"),
-    ("Azure",     "App Service, Azure Functions, Azure SQL, Service Bus, Event Grid, Key Vault, Azure AD, APIM, Azure Monitor, Application Insights, Azure Container Registry"),
-    ("DevOps",    "Azure DevOps (YAML Pipelines), GitHub Actions, Docker, Kubernetes, ARM Templates, Bicep, SonarQube"),
-    ("Security",  "OAuth 2.0, OpenID Connect, JWT, Azure AD, RBAC, OWASP Secure API Design, Data Encryption"),
-    ("Data",      "SQL Server 2014-2022, Azure SQL, Entity Framework Core, ADO.NET, Redis, SSIS, SSRS, Power BI"),
-    ("AI / GenAI","Azure OpenAI Service, Semantic Kernel, GitHub Copilot, RAG concepts, LLM-based automation prototypes"),
-    ("Testing",   "NUnit, xUnit, MSTest, Moq, TDD, Integration Testing, Load Testing"),
-)
-
 # ─── Named style definitions ──────────────────────────────────────────────────
 
 def _get_or_add_style(doc: Document, name: str, style_type=WD_STYLE_TYPE.PARAGRAPH):
@@ -411,8 +399,8 @@ def _set_cell_width(cell, width: int):
     _set_xml_attr(tc_w, "type", "dxa")
 
 
-def _add_technical_skills_table(doc: Document):
-    table = doc.add_table(rows=len(_TECHNICAL_SKILL_ROWS), cols=2)
+def _add_technical_skills_table(doc: Document, skill_rows: list[tuple[str, str]]):
+    table = doc.add_table(rows=len(skill_rows), cols=2)
     try:
         table.style = doc.styles["Resume Skills Table"]
     except KeyError:
@@ -422,7 +410,7 @@ def _add_technical_skills_table(doc: Document):
         tbl_pr.remove(layout)
     _set_table_skills_style(table)
     # Col widths mirror the retained Publix reference: 1.806 in / 5.694 in.
-    for row_index, (row, (label, value)) in enumerate(zip(table.rows, _TECHNICAL_SKILL_ROWS)):
+    for row_index, (row, (label, value)) in enumerate(zip(table.rows, skill_rows)):
         _set_cell_width(row.cells[0], 2600)
         _set_cell_width(row.cells[1], 8200)
         _set_cell_shading(row.cells[0], "D6E4F7" if row_index % 2 == 0 else "E8F0FB")
@@ -565,6 +553,29 @@ def _split_company_location_date(line: str):
     return parts[0], " | ".join(parts[1:]), " | ".join(date_parts)
 
 
+def _technical_skill_rows(lines: list[str]) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    in_skills = False
+    for line in lines:
+        heading = _normalized_heading(line)
+        if heading == "technical skills":
+            in_skills = True
+            continue
+        if not in_skills:
+            continue
+        if _is_section_heading(line):
+            break
+        label, separator, value = line.partition(":")
+        if separator and label.strip() and value.strip():
+            rows.append((label.strip(), value.strip()))
+        elif rows:
+            previous_label, previous_value = rows[-1]
+            rows[-1] = (previous_label, f"{previous_value} {line.strip()}")
+        elif line.strip():
+            rows.append(("Skills", line.strip()))
+    return rows
+
+
 def _prepare_resume_lines(resume_text: str) -> list[str]:
     raw_lines = [line.strip() for line in resume_only_text(resume_text).splitlines() if line.strip()]
     lines: list[str] = []
@@ -582,10 +593,6 @@ def _prepare_resume_lines(resume_text: str) -> list[str]:
         if heading == "technical skills":
             lines.append("TECHNICAL SKILLS")
             i += 1
-            while i < len(raw_lines) and _normalized_heading(raw_lines[i]) not in {
-                "professional experience", "experience", "work experience"
-            }:
-                i += 1
             continue
 
         if heading in {"professional experience", "experience", "work experience"}:
@@ -699,6 +706,7 @@ def build_resume_docx(resume_text: str, *, candidate_name: str | None = None) ->
     bullet_num_id = _setup_bullet_numid(doc)
 
     lines = _prepare_resume_lines(resume_text)
+    skill_rows = _technical_skill_rows(lines)
     first_content = next((l.strip() for l in lines if l.strip()), "")
     name_line = _clean_candidate_name(candidate_name or first_content)
     _strip_generator_metadata(doc, name_line)
@@ -752,7 +760,8 @@ def build_resume_docx(resume_text: str, *, candidate_name: str | None = None) ->
             p = _styled_paragraph(doc, "Resume Section Heading")
             _run(p, heading, bold=True)
             if heading == "TECHNICAL SKILLS":
-                _add_technical_skills_table(doc)
+                if skill_rows:
+                    _add_technical_skills_table(doc, skill_rows)
             continue
 
         # ── Header zone (contact lines) ──────────────────────────────────────
