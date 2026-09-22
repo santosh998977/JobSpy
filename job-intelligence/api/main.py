@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from analytics import AnalyticsEngine
 from ai import rebuild_resume
-from ai.resume_keyword_plan import extract_target_title, normalized_hash
+from ai.resume_keyword_plan import build_keyword_plan, extract_target_title, normalized_hash
 from ai.resume_orchestrator import (
     GenerationMode,
     OrchestrationRequest,
@@ -59,6 +59,8 @@ from api.schemas import (
     ResumeLabProfileCreate,
     ResumeLabProfileOut,
     ResumeLabResumeUpdate,
+    ResumeLabGapRequest,
+    ResumeLabGapResponse,
     ResumeLabGenerateRequest,
     ResumeLabGenerateResponse,
     ResumeLabCoverLetterRequest,
@@ -745,6 +747,26 @@ def _resume_lab_source(profile: ResumeLabProfile) -> tuple[str, str]:
         f"{resume}\n\nUSER-VERIFIED EXPERIENCE NOTES (source facts only):\n{notes}"
     )
     return source, normalized_hash(profile.resume_sha256 or "", notes)
+
+
+@app.post("/resume-lab/gaps", response_model=ResumeLabGapResponse)
+def get_resume_lab_gaps(
+    payload: ResumeLabGapRequest,
+    session: Session = Depends(get_session),
+):
+    profile = JobRepository(session).get_resume_lab_profile(payload.profile_id)
+    if profile is None or not profile.resume_text:
+        raise HTTPException(status_code=404, detail="Resume Lab profile not found")
+    if profile.source_version != payload.source_version:
+        raise HTTPException(
+            status_code=409,
+            detail="The saved resume changed; reload before checking keywords",
+        )
+    source_text, _ = _resume_lab_source(profile)
+    plan = build_keyword_plan(
+        source_text, payload.job_description, target_title=payload.target_title
+    )
+    return ResumeLabGapResponse(missing_keywords=plan.unsupported[:10])
 
 
 def _resume_lab_run_response(run: ResumeLabRun, *, cache_hit: bool = False):

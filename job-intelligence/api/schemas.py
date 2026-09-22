@@ -172,6 +172,17 @@ class GenerationEventOut(BaseModel):
     message: str
 
 
+class ResumeLabGapRequest(BaseModel):
+    profile_id: int
+    source_version: int = Field(ge=0)
+    job_description: str = Field(min_length=50)
+    target_title: str | None = Field(default=None, max_length=500)
+
+
+class ResumeLabGapResponse(BaseModel):
+    missing_keywords: list[str]
+
+
 class ResumeLabGenerateRequest(BaseModel):
     profile_id: int
     source_version: int = Field(ge=0)

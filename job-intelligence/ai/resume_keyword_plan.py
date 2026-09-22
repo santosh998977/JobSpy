@@ -7,7 +7,9 @@ import re
 
 TECH_TERMS = (
     "C#", ".NET", "ASP.NET Core", "Java", "Python", "PyTorch", "TensorFlow",
+    "Spring Boot", "Hibernate", "Kafka", "Maven", "Gradle", "JUnit", "Mockito",
     "Azure", "AWS", "GCP", "SQL", "SQL Server", "PostgreSQL", "MongoDB",
+    "Oracle", "Jenkins",
     "React", "Angular", "TypeScript", "JavaScript", "REST API", "REST APIs",
     "Microservices", "Docker", "Kubernetes", "LangChain", "LLM", "RAG",
     "Machine Learning", "Artificial Intelligence", "NLP", "CI/CD", "Git",
