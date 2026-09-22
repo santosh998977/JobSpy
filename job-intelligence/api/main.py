@@ -84,7 +84,7 @@ from search import SearchEngine
 from storage.backups import backup_sqlite_database
 from storage.config import get_settings
 from storage.database import SessionLocal, get_session, init_database
-from storage.models import AIGenerationJob, AIGenerationStatus, Application, ChangeType, CoverLetterVersion, DocumentKind, Job, ResumeLabRun, ResumeVersion, SearchRun, UserProfile
+from storage.models import AIGenerationJob, AIGenerationStatus, Application, ChangeType, CoverLetterVersion, DocumentKind, Job, ResumeLabProfile, ResumeLabRun, ResumeVersion, SearchRun, UserProfile
 from storage.repository import JobRepository, ResumeProfileConflict
 from search.scoring import score_job
 from search.trust import score_trust
@@ -736,6 +736,17 @@ def remove_resume_lab_profile_resume(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+def _resume_lab_source(profile: ResumeLabProfile) -> tuple[str, str]:
+    resume = (profile.resume_text or "").strip()
+    notes = (profile.verified_experience_notes or "").strip()
+    if not notes:
+        return resume, profile.resume_sha256 or normalized_hash(resume)
+    source = (
+        f"{resume}\n\nUSER-VERIFIED EXPERIENCE NOTES (source facts only):\n{notes}"
+    )
+    return source, normalized_hash(profile.resume_sha256 or "", notes)
+
+
 def _resume_lab_run_response(run: ResumeLabRun, *, cache_hit: bool = False):
     events = list(run.events or [])
     if cache_hit:
@@ -772,10 +783,11 @@ def generate_resume_lab_resume(
         raise HTTPException(status_code=409, detail="Attach and save a source resume first")
     if profile.source_version != payload.source_version:
         raise HTTPException(status_code=409, detail="The saved resume changed; reload before generating")
+    source_text, source_hash = _resume_lab_source(profile)
     title = extract_target_title(payload.target_title, payload.job_description)
     jd_hash = normalized_hash(payload.job_description)
     input_hash = normalized_hash(
-        profile.resume_sha256, payload.job_description, title,
+        source_hash, payload.job_description, title,
         payload.company_name or "", payload.mode,
     )
     cache_key = normalized_hash(
@@ -794,7 +806,7 @@ def generate_resume_lab_resume(
 
     result = orchestrate_resume(
         OrchestrationRequest(
-            source_resume=profile.resume_text,
+            source_resume=source_text,
             job_description=payload.job_description,
             target_title=title,
             company_name=payload.company_name,
@@ -810,7 +822,7 @@ def generate_resume_lab_resume(
         id=str(uuid.uuid4()),
         idempotency_key=(payload.idempotency_key if not force else f"{payload.idempotency_key[:96]}:force:{uuid.uuid4().hex[:12]}"),
         cache_key=cache_key, profile_id=profile.id, mode=payload.mode,
-        status=result.status, source_hash=profile.resume_sha256,
+        status=result.status, source_hash=source_hash,
         input_hash=input_hash, job_description_hash=jd_hash,
         target_title=title, company_name=payload.company_name,
         content_text=result.resume_text, ats_score=result.ats_score,
@@ -873,10 +885,11 @@ def refine_resume_lab_resume(
     profile = repository.get_resume_lab_profile(payload.profile_id)
     if profile is None or not profile.resume_text:
         raise HTTPException(status_code=404, detail="Resume Lab profile not found")
+    source_text, source_hash = _resume_lab_source(profile)
     try:
         result = refine_resume(
             RefineRequest(
-                source_resume=profile.resume_text,
+                source_resume=source_text,
                 current_resume=payload.current_resume,
                 job_description=payload.job_description,
                 target_title=payload.target_title,
@@ -904,14 +917,14 @@ def refine_resume_lab_resume(
             detail=f"Refinement did not produce a valid resume. {reasons}".strip(),
         )
     input_hash = normalized_hash(
-        profile.resume_sha256 or "", payload.job_description, payload.target_title,
+        source_hash, payload.job_description, payload.target_title,
         payload.company_name or "", payload.mode,
     )
     run = ResumeLabRun(
         id=str(uuid.uuid4()), idempotency_key=f"refine:{uuid.uuid4()}",
         cache_key=normalized_hash(input_hash, payload.current_resume, payload.instruction),
         profile_id=profile.id, mode=payload.mode, status=result.status,
-        source_hash=profile.resume_sha256 or normalized_hash(profile.resume_text),
+        source_hash=source_hash,
         input_hash=input_hash,
         job_description_hash=normalized_hash(payload.job_description),
         target_title=payload.target_title, company_name=payload.company_name,

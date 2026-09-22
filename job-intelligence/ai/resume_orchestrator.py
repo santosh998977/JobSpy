@@ -90,6 +90,8 @@ _NATURAL_STYLE_RULES = (
     "leverage, utilize, spearhead, robust, seamless, pivotal, transformative, synergy, "
     "results-driven, detail-oriented, passionate, cutting-edge, best-in-class, and proven track record. "
     "Avoid em dashes and repetitive paired verbs. Never fabricate metrics."
+    " Integrate relevant user-verified notes into appropriate resume sections. "
+    "Do not output a separate verified-notes or supplemental-notes section."
 )
 
 
