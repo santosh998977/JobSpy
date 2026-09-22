@@ -586,7 +586,16 @@ export default function ResumeLabPage() {
     }
   }
 
-  const activeProfile = profiles.find((profile) => profile.id === profileId) ?? profiles[0];
+  const activeProfile = profiles.find((profile) => profile.id === profileId);
+  const savedSource = activeProfile?.resume_text ?? "";
+  const sourceSkills = [
+    /\b(?:Spring Boot|Hibernate|JUnit)\b/i.test(savedSource) ? "Java" : null,
+    /\.NET\b|\bC#/i.test(savedSource) ? ".NET" : null,
+  ].filter(Boolean).join(" + ");
+  const profileNameMismatch = Boolean(activeProfile && (
+    (/\bJava\b/i.test(activeProfile.name) && sourceSkills === ".NET")
+    || (/\.NET\b/i.test(activeProfile.name) && sourceSkills === "Java")
+  ));
   const currentSnapshot = JSON.stringify([
     activeProfile?.id ?? null, activeProfile?.source_version ?? null,
     jobDescription, jobTitle, jobCompany, generationMode, generationSpeed, modelChoiceId, targetPages,
@@ -602,6 +611,16 @@ export default function ResumeLabPage() {
       setCoverLetterProvider("");
     }
   }, [currentSnapshot, generatedSnapshot]);
+
+  function clearGeneratedResume() {
+    setGenerationRun(null);
+    setRebuildResult(null);
+    setGeneratedSnapshot(null);
+    setAtsBefore(null);
+    setAtsAfter(null);
+    setCoverLetter("");
+    setCoverLetterProvider("");
+  }
 
   useEffect(() => {
     async function loadCentralProfiles() {
@@ -620,9 +639,11 @@ export default function ResumeLabPage() {
       }
       serverProfiles = await getResumeLabProfiles();
       setProfiles(serverProfiles);
-      setProfileId(serverProfiles[0]?.id ?? null);
-      setResumeText(serverProfiles[0]?.resume_text ?? "");
-      setExperienceNotes(serverProfiles[0]?.verified_experience_notes ?? "");
+      const savedId = Number(window.localStorage.getItem("resume-lab-selected-profile-id"));
+      const selected = serverProfiles.find((profile) => profile.id === savedId);
+      setProfileId(selected?.id ?? null);
+      setResumeText(selected?.resume_text ?? "");
+      setExperienceNotes(selected?.verified_experience_notes ?? "");
     }
     void loadCentralProfiles().catch((error) => {
       toast.error(error instanceof Error ? error.message : "Could not load Resume Lab profiles");
@@ -717,10 +738,10 @@ export default function ResumeLabPage() {
     const numericId = Number(nextProfileId);
     const nextProfile = profiles.find((profile) => profile.id === numericId);
     setProfileId(numericId);
+    window.localStorage.setItem("resume-lab-selected-profile-id", String(numericId));
     setResumeText(nextProfile?.resume_text ?? "");
     setExperienceNotes(nextProfile?.verified_experience_notes ?? "");
-    setGenerationRun(null);
-    setCoverLetter("");
+    clearGeneratedResume();
   }
 
   async function createProfile() {
@@ -730,10 +751,10 @@ export default function ResumeLabPage() {
       const created = await createResumeLabProfile(name.trim());
       setProfiles((current) => [...current, created]);
       setProfileId(created.id);
+      window.localStorage.setItem("resume-lab-selected-profile-id", String(created.id));
       setResumeText("");
       setExperienceNotes("");
-      setGenerationRun(null);
-      setCoverLetter("");
+      clearGeneratedResume();
       toast.success("Profile created");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Profile creation failed");
@@ -751,8 +772,7 @@ export default function ResumeLabPage() {
         verified_experience_notes: experienceNotes.trim(),
       });
       setProfiles((current) => current.map((item) => item.id === saved.id ? saved : item));
-      setGenerationRun(null);
-      setCoverLetter("");
+      clearGeneratedResume();
       toast.success("Profile saved on the VM");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Profile save failed");
@@ -764,17 +784,22 @@ export default function ResumeLabPage() {
     try {
       const text = bufferToBase64(await file.arrayBuffer());
       const result = await parseResume(file.name, text);
-      setResumeText(result.text);
-      if (!activeProfile) return;
-      const saved = await saveResumeLabResume(activeProfile.id, {
+      if (result.text.trim().length < 50) throw new Error("The uploaded resume has too little readable text");
+      const name = `Uploaded: ${file.name.replace(/\.[^.]+$/, "").slice(0, 110)} (${crypto.randomUUID().slice(0, 8)})`;
+      const created = await createResumeLabProfile(name);
+      const saved = await saveResumeLabResume(created.id, {
         resume_text: result.text,
         resume_filename: file.name,
-        expected_source_version: activeProfile.source_version,
+        expected_source_version: created.source_version,
       });
-      setProfiles((current) => current.map((item) => item.id === saved.id ? saved : item));
-      setGenerationRun(null);
-      setCoverLetter("");
-      toast.success("Resume imported and saved on the VM");
+      setProfiles((current) => [...current, saved]);
+      setProfileId(saved.id);
+      window.localStorage.setItem("resume-lab-selected-profile-id", String(saved.id));
+      setResumeText(saved.resume_text ?? result.text);
+      setExperienceNotes("");
+      setCheckpointOpen(false);
+      clearGeneratedResume();
+      toast.success("Uploaded resume saved as a new profile and selected");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Resume import failed");
     }
@@ -786,9 +811,7 @@ export default function ResumeLabPage() {
       const updated = await removeResumeLabResume(activeProfile.id, activeProfile.source_version);
       setProfiles((current) => current.map((item) => item.id === updated.id ? updated : item));
       setResumeText("");
-      setGenerationRun(null);
-      setRebuildResult(null);
-      setCoverLetter("");
+      clearGeneratedResume();
       toast.success("Saved resume removed; profile kept");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not remove saved resume");
@@ -896,6 +919,7 @@ export default function ResumeLabPage() {
         verified_experience_notes: experienceNotes.trim(),
       });
       setProfiles((current) => current.map((item) => item.id === saved.id ? saved : item));
+      clearGeneratedResume();
       setCheckpointOpen(false);
       toast.success("Verified experience saved");
       if (generate) await startGeneration(saved);
@@ -1161,12 +1185,12 @@ export default function ResumeLabPage() {
         <Card className="surface shadow-none">
           <CardHeader>
             <CardTitle>Profile and base resume</CardTitle>
-            <CardDescription>Saved centrally on the VM and available from Windows or Mac.</CardDescription>
+            <CardDescription>Select a saved profile or upload a resume. Uploads are saved as separate profiles on the VM.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 md:grid-cols-[220px_1fr_auto]">
               <Select value={profileId ? String(profileId) : ""} onValueChange={selectProfile}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Select a saved profile" /></SelectTrigger>
                 <SelectContent>
                   {profiles.map((profile) => (
                     <SelectItem key={profile.id} value={String(profile.id)}>{profile.name}</SelectItem>
@@ -1174,11 +1198,18 @@ export default function ResumeLabPage() {
                 </SelectContent>
               </Select>
               <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground hover:bg-muted">
-                <Upload className="h-4 w-4" /> Attach resume
-                <input className="sr-only" type="file" accept=".docx,.txt" onChange={(event) => importResume(event.target.files?.[0])} />
+                <Upload className="h-4 w-4" /> Upload resume
+                <input className="sr-only" type="file" accept=".docx,.txt" onChange={(event) => {
+                  void importResume(event.target.files?.[0]);
+                  event.target.value = "";
+                }} />
               </label>
               <Button variant="outline" onClick={() => void createProfile()}>New profile</Button>
             </div>
+            <p className="text-sm text-muted-foreground">
+              Generation source: {activeProfile ? <><span className="font-medium text-foreground">{activeProfile.name}</span>{activeProfile.resume_filename ? ` · ${activeProfile.resume_filename}` : ""}{sourceSkills ? ` · ${sourceSkills} skills found` : ""}</> : "Select a saved profile or upload a resume"}
+            </p>
+            {profileNameMismatch ? <p className="text-sm text-amber-700">This profile name does not match the skills in its saved resume. Review the source before generating.</p> : null}
             <details className="rounded-lg border p-3">
               <summary className="cursor-pointer text-sm font-medium">Resume editor</summary>
               <Textarea value={resumeText} onChange={(event) => setResumeText(event.target.value)} placeholder="Upload or paste your base resume..." className="mt-3 min-h-40 max-h-72" />
@@ -1199,7 +1230,7 @@ export default function ResumeLabPage() {
               </div>
             </details>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={() => void saveActiveProfile()}><Save className="h-4 w-4" /> Save profile</Button>
+              <Button onClick={() => void saveActiveProfile()} disabled={!activeProfile}><Save className="h-4 w-4" /> Save profile</Button>
               <Button variant="outline" onClick={() => copyText(resumeText, "Resume copied")}>Copy resume text</Button>
               {activeProfile?.resume_text ? <Button variant="outline" onClick={() => void removeSavedResume()}>Remove saved resume</Button> : null}
             </div>
