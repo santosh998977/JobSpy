@@ -60,5 +60,64 @@ def test_replace_two_recent_titles_preserves_older_role_and_employers():
     assert "Junior Developer | OldCo" in transformed
 
 
+def test_replace_two_recent_titles_handles_split_role_layout_without_overwriting_employers():
+    resume = """PROFESSIONAL EXPERIENCE
+Senior Java Software Developer
+Schneider Electric, Carrollton, TX | January 2025 - Present
+- Built Spring Boot services.
+
+Senior Java Developer
+Oracle, Austin, TX | February 2023 - December 2024
+- Built Java services.
+
+Software Engineer
+JPMorgan Chase, Columbus, OH | January 2020 - January 2023
+- Maintained applications.
+
+EDUCATION
+Bachelor of Technology
+"""
+
+    transformed, originals = replace_two_recent_titles(resume, "Lead Software Engineer")
+
+    assert originals == ["Senior Java Software Developer", "Senior Java Developer"]
+    assert transformed.count("Lead Software Engineer") == 2
+    assert "Schneider Electric, Carrollton, TX | January 2025 - Present" in transformed
+    assert "Oracle, Austin, TX | February 2023 - December 2024" in transformed
+    assert "Software Engineer\nJPMorgan Chase" in transformed
+
+
+def test_placeholder_target_title_never_replaces_real_titles_or_employers():
+    transformed, originals = replace_two_recent_titles(THREE_ROLE_RESUME, "Target Role")
+
+    assert transformed == THREE_ROLE_RESUME.rstrip("\n")
+    assert originals == []
+
+
+def test_keyword_plan_covers_supported_healthcare_full_stack_jd_phrases():
+    source = (
+        "Cross-functional Java J2EE engineer using Spring Boot, React, TypeScript, and Python. "
+        "Built data processing batch validation with SQL, NoSQL, search, Azure App Services, "
+        "Docker, Kubernetes, GitHub Actions, test-driven development, GitHub Copilot, "
+        "prompt engineering, and code review."
+    )
+    jd = (
+        "Own cross-functional Java/J2EE Spring Boot and React TypeScript applications. "
+        "Build Python data-processing pipelines with batch validation, SQL, NoSQL and search/indexing. "
+        "Use Azure App Services, AKS, Cosmos DB, Docker, Kubernetes, GitHub Actions, "
+        "test-driven development, GitHub Copilot, prompt engineering, and code review."
+    )
+
+    plan = build_keyword_plan(source, jd)
+
+    assert {
+        "Cross-functional", "J2EE", "React", "TypeScript", "Python",
+        "Data processing", "Batch", "Validation", "NoSQL", "Search", "Indexing",
+        "Azure App Services", "GitHub Actions", "Test-driven development",
+        "GitHub Copilot", "Prompt engineering", "Code review",
+    } <= set(plan.supported)
+    assert {"AKS", "Cosmos DB"} <= set(plan.unsupported)
+
+
 def test_hash_is_stable_for_line_endings_and_outer_space():
     assert normalized_hash(" a\r\nb ") == normalized_hash("a\nb")

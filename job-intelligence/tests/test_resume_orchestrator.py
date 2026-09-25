@@ -120,6 +120,8 @@ def test_balanced_writes_and_reviews_on_paid_openrouter():
     assert fake.models == ["deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3"]
     assert result.status == "REVIEWED"
     assert "LangChain" in fake.prompts[0]  # explicitly marked unsupported
+    assert "Ensure every supported exact JD keyword" in fake.prompts[1]
+    assert "Do not add unsupported JD keywords" in fake.prompts[1]
 
 
 def test_resume_prompts_require_specific_natural_language():
@@ -336,6 +338,22 @@ def test_writer_prompt_requires_complete_humanized_role_blocks():
     assert "supported JD keywords" in prompt
     assert "unsupported JD keywords" in prompt
     assert "vary" in prompt.lower()
+
+
+def test_placeholder_target_preserves_existing_role_titles():
+    fake = FakeCompletion()
+    placeholder_request = OrchestrationRequest(
+        source_resume=BASE_RESUME,
+        job_description=JD,
+        target_title="Target Role",
+        company_name="Example",
+        mode=GenerationMode.HYBRID,
+    )
+
+    orchestrate_resume(placeholder_request, settings(), completion=fake)
+
+    assert "Preserve every displayed role title" in fake.prompts[0]
+    assert "Replace the displayed titles" not in fake.prompts[0]
 
 
 def test_page_target_preserves_project_and_environment_lines():

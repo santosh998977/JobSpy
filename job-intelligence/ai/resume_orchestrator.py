@@ -198,12 +198,17 @@ def _messages(request: OrchestrationRequest, *, draft: str | None = None) -> lis
     )
     supported = ", ".join(plan.supported) or "None"
     unsupported = ", ".join(plan.unsupported) or "None"
+    title_instruction = (
+        "Preserve every displayed role title exactly as in the source. "
+        if request.target_title.strip().lower() == "target role"
+        else "Replace the displayed titles of the two most recent roles with the target title. "
+    )
     if draft is None:
         task = (
             "Write the complete tailored resume. Required supported JD keywords that must appear "
             f"naturally: {supported}. Unsupported JD keywords that must NOT be added: {unsupported}. "
-            "Replace the displayed titles of the two most recent roles with the target title. "
-            "Preserve employers, dates, education, contact details, responsibilities, and every other fact. "
+            + title_instruction
+            + "Preserve employers, dates, education, contact details, responsibilities, and every other fact. "
             + _NATURAL_STYLE_RULES
             + _length_instruction(request.target_pages)
         )
@@ -211,7 +216,8 @@ def _messages(request: OrchestrationRequest, *, draft: str | None = None) -> lis
         task = (
             "Review and return the complete corrected resume. Treat the source resume as the sole "
             "source of truth. Remove unsupported claims, AI filler, promotional wording, repetition, "
-            "and uniform bullet patterns. Preserve all roles. "
+            "and uniform bullet patterns. Preserve all roles. Ensure every supported exact JD keyword "
+            f"appears naturally: {supported}. Do not add unsupported JD keywords: {unsupported}. "
             + _NATURAL_STYLE_RULES
             + _length_instruction(request.target_pages)
             + "\n\nWRITER DRAFT:\n" + draft

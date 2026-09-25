@@ -13,6 +13,15 @@ TECH_TERMS = (
     "React", "Angular", "TypeScript", "JavaScript", "REST API", "REST APIs",
     "Microservices", "Docker", "Kubernetes", "LangChain", "LLM", "RAG",
     "Machine Learning", "Artificial Intelligence", "NLP", "CI/CD", "Git",
+    "J2EE", "Cross-functional", "Technical anchor", "Technical ownership",
+    "Design direction", "Release readiness", "Backlog refinement", "Technical estimation",
+    "Mentoring", "Data processing", "Data transformation", "Batch", "Validation",
+    "Workflow orchestration", "Scheduled batch processing", "Distributed data processing",
+    "NoSQL", "Document databases", "Search", "Indexing", "Azure App Services", "App Services", "AKS",
+    "Cosmos DB", "Azure DevOps", "GitHub Actions", "Test-driven development", "TDD",
+    "AI-accelerated SDLC", "AI-assisted development", "AI coding assistants", "GitHub Copilot", "VS Code",
+    "IntelliJ", "Prompt engineering", "Code review", "Test generation", "Refactoring",
+    "Downstream clients", "Airflow",
 )
 
 ALIASES = {
@@ -31,12 +40,13 @@ class KeywordPlan:
 
 
 def _normalize_term(value: str) -> str:
-    normalized = re.sub(r"\s+", " ", value.strip().lower())
+    normalized = re.sub(r"\s+", " ", re.sub(r"[-–—]+", " ", value.strip().lower()))
     return ALIASES.get(normalized, normalized)
 
 
 def _searchable_text(value: str) -> str:
-    return re.sub(r"https?://\S+|www\.\S+|\b\S+@\S+\b", " ", value.lower())
+    scrubbed = re.sub(r"https?://\S+|www\.\S+|\b\S+@\S+\b", " ", value.lower())
+    return re.sub(r"[-–—]+", " ", scrubbed)
 
 
 def _term_match(text: str, term: str) -> re.Match[str] | None:
@@ -83,10 +93,16 @@ def build_keyword_plan(
 
 
 def replace_two_recent_titles(resume_text: str, target_title: str) -> tuple[str, list[str]]:
+    if _normalize_term(target_title) in {"", "target role"}:
+        return resume_text.rstrip("\n"), []
+
     lines = resume_text.splitlines()
     in_experience = False
     originals: list[str] = []
     section_re = re.compile(r"^(education|technical skills|skills|certifications?|projects?)\s*:?$", re.I)
+    role_re = re.compile(
+        r"\b(developer|engineer|architect|lead|manager|analyst|consultant)\b", re.I
+    )
     for index, line in enumerate(lines):
         stripped = line.strip()
         if re.match(r"^(professional |work )?experience\s*:?$", stripped, re.I):
@@ -94,10 +110,15 @@ def replace_two_recent_titles(resume_text: str, target_title: str) -> tuple[str,
             continue
         if in_experience and section_re.match(stripped):
             break
-        if in_experience and "|" in stripped and len(originals) < 2:
+        if not in_experience or len(originals) >= 2 or stripped.startswith(("-", "•", "*")):
+            continue
+        prefix = line[: len(line) - len(line.lstrip())]
+        if "|" in stripped:
             title, remainder = stripped.split("|", 1)
-            if title.strip() and remainder.strip():
+            if role_re.search(title) and remainder.strip():
                 originals.append(title.strip())
-                prefix = line[: len(line) - len(line.lstrip())]
                 lines[index] = f"{prefix}{target_title.strip()} |{remainder}"
+        elif len(stripped.split()) <= 12 and role_re.search(stripped):
+            originals.append(stripped)
+            lines[index] = f"{prefix}{target_title.strip()}"
     return "\n".join(lines), originals
