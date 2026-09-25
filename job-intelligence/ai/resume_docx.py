@@ -25,18 +25,6 @@ _SECTION_WORDS = (
     "awards", "publications", "languages", "keyword gaps", "interests",
 )
 
-_TECHNICAL_SKILL_ROWS = (
-    ("Languages", "C#, TypeScript, JavaScript, Python, T-SQL, PowerShell"),
-    ("Backend",   ".NET 6/7/8, ASP.NET Core Web API, Entity Framework Core, REST APIs, Microservices, gRPC, WCF"),
-    ("Frontend",  "React 18 (Hooks, Redux Toolkit), Angular, TypeScript, HTML5, CSS3, Bootstrap, SASS"),
-    ("Azure",     "App Service, Azure Functions, Azure SQL, Service Bus, Event Grid, Key Vault, Azure AD, APIM, Azure Monitor, Application Insights, Azure Container Registry"),
-    ("DevOps",    "Azure DevOps (YAML Pipelines), GitHub Actions, Docker, Kubernetes, ARM Templates, Bicep, SonarQube"),
-    ("Security",  "OAuth 2.0, OpenID Connect, JWT, Azure AD, RBAC, OWASP Secure API Design, Data Encryption"),
-    ("Data",      "SQL Server 2014-2022, Azure SQL, Entity Framework Core, ADO.NET, Redis, SSIS, SSRS, Power BI"),
-    ("AI / GenAI","Azure OpenAI Service, Semantic Kernel, GitHub Copilot, RAG concepts, LLM-based automation prototypes"),
-    ("Testing",   "NUnit, xUnit, MSTest, Moq, TDD, Integration Testing, Load Testing"),
-)
-
 # ─── Named style definitions ──────────────────────────────────────────────────
 
 def _get_or_add_style(doc: Document, name: str, style_type=WD_STYLE_TYPE.PARAGRAPH):
@@ -119,11 +107,12 @@ def _define_styles(doc: Document) -> None:
 
     # 5. Resume Job Title (runs carry mixed colors; style owns spacing only)
     s = _get_or_add_style(doc, "Resume Job Title")
-    _f(s).name = "Calibri"; _f(s).size = Pt(10.5); _f(s).bold = True
+    _f(s).name = "Calibri"; _f(s).size = Pt(12); _f(s).bold = True
     _f(s).color.rgb = _NAVY
     _pf(s).space_before = Pt(8); _pf(s).space_after = Pt(1.2)
     _pf(s).keep_with_next = True
     _ex(s)
+    _pf(s).line_spacing = Pt(13.2)
 
     # 7. Resume Date
     s = _get_or_add_style(doc, "Resume Date")
@@ -315,7 +304,7 @@ def _add_role_line(doc: Document, text: str):
     if not parts:
         return
     # Job title — dark bold (inherits from Resume Job Title style)
-    _run(p, parts[0], bold=True, color=_BODY)
+    _run(p, parts[0], bold=True, size=12, color=_NAVY)
     if len(parts) > 1:
         _run(p, "   |   ", color=_GRAY, bold=False)
         # Company name — Resume Company character style
@@ -411,8 +400,10 @@ def _set_cell_width(cell, width: int):
     _set_xml_attr(tc_w, "type", "dxa")
 
 
-def _add_technical_skills_table(doc: Document):
-    table = doc.add_table(rows=len(_TECHNICAL_SKILL_ROWS), cols=2)
+def _add_technical_skills_table(doc: Document, rows: list[tuple[str, str]]):
+    if not rows:
+        return
+    table = doc.add_table(rows=len(rows), cols=2)
     try:
         table.style = doc.styles["Resume Skills Table"]
     except KeyError:
@@ -422,7 +413,7 @@ def _add_technical_skills_table(doc: Document):
         tbl_pr.remove(layout)
     _set_table_skills_style(table)
     # Col widths mirror the retained Publix reference: 1.806 in / 5.694 in.
-    for row_index, (row, (label, value)) in enumerate(zip(table.rows, _TECHNICAL_SKILL_ROWS)):
+    for row_index, (row, (label, value)) in enumerate(zip(table.rows, rows)):
         _set_cell_width(row.cells[0], 2600)
         _set_cell_width(row.cells[1], 8200)
         _set_cell_shading(row.cells[0], "D6E4F7" if row_index % 2 == 0 else "E8F0FB")
@@ -489,6 +480,24 @@ def _is_section_heading(line: str) -> bool:
     return stripped.lower() in _SECTION_WORDS
 
 
+def _extract_technical_skill_rows(resume_text: str) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    in_skills = False
+    for raw in resume_only_text(resume_text).splitlines():
+        line = raw.strip()
+        heading = _normalized_heading(line)
+        if heading == "technical skills":
+            in_skills = True
+            continue
+        if in_skills and _is_section_heading(line):
+            break
+        if in_skills and ":" in line:
+            label, value = (part.strip() for part in line.split(":", 1))
+            if label and value:
+                rows.append((label, value))
+    return rows
+
+
 def _is_bullet(line: str) -> bool:
     return bool(re.match(r"^\s*[-•*o]\s+", line))
 
@@ -553,14 +562,23 @@ def _looks_like_role_title(line: str) -> bool:
 
 def _split_company_location_date(line: str):
     parts = [p.strip() for p in re.split(r"\s+\|\s+", line.strip()) if p.strip()]
-    if len(parts) < 3:
+    if len(parts) < 2:
         return None
     date_parts: list[str] = []
     while parts and (_looks_like_date_line(parts[-1]) or date_parts):
         date_parts.insert(0, parts.pop())
         if date_parts and len(" | ".join(date_parts).split()) >= 2:
             break
-    if len(parts) < 2 or not date_parts:
+    if not date_parts:
+        return None
+    if len(parts) == 1:
+        company_location = [part.strip() for part in parts[0].split(",") if part.strip()]
+        if len(company_location) < 2:
+            return None
+        company = ", ".join(company_location[:-2]) if len(company_location) >= 3 else company_location[0]
+        location = ", ".join(company_location[-2:]) if len(company_location) >= 3 else company_location[1]
+        return company, location, " | ".join(date_parts)
+    if len(parts) < 2:
         return None
     return parts[0], " | ".join(parts[1:]), " | ".join(date_parts)
 
@@ -699,6 +717,7 @@ def build_resume_docx(resume_text: str, *, candidate_name: str | None = None) ->
     bullet_num_id = _setup_bullet_numid(doc)
 
     lines = _prepare_resume_lines(resume_text)
+    technical_skill_rows = _extract_technical_skill_rows(resume_text)
     first_content = next((l.strip() for l in lines if l.strip()), "")
     name_line = _clean_candidate_name(candidate_name or first_content)
     _strip_generator_metadata(doc, name_line)
@@ -752,7 +771,7 @@ def build_resume_docx(resume_text: str, *, candidate_name: str | None = None) ->
             p = _styled_paragraph(doc, "Resume Section Heading")
             _run(p, heading, bold=True)
             if heading == "TECHNICAL SKILLS":
-                _add_technical_skills_table(doc)
+                _add_technical_skills_table(doc, technical_skill_rows)
             continue
 
         # ── Header zone (contact lines) ──────────────────────────────────────

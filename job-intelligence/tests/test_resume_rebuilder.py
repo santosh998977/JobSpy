@@ -324,37 +324,77 @@ def test_rebuild_resume_repairs_collapsed_required_sections(monkeypatch):
     assert "KEYWORD GAPS" not in result.rebuilt_resume
 
 
-def test_resume_docx_uses_canonical_technical_skills_table():
+def test_resume_docx_uses_tailored_technical_skills_table_once():
     docx_bytes = build_resume_docx(
         """
-SANTOSH MULAKIDI
-Software Engineer | .NET Core | Azure Cloud
-Dallas, TX | email@example.com | 555-555-5555
+TEJASRI DEGAM
+Senior Java Software Engineer
+Frisco, TX | email@example.com | 555-555-5555
 
 PROFESSIONAL SUMMARY
 Senior software engineer.
 
 CORE STRENGTHS
-Cloud-Native Application Development   ·   Azure Microservices Architecture
+Java Microservices   ·   AWS Cloud Architecture
 
 TECHNICAL SKILLS
-.NET: C#, ASP.NET Core
+Programming Languages: Java, Python, SQL
+Frameworks: Spring Boot, Hibernate
+Cloud: AWS, Azure
 
 PROFESSIONAL EXPERIENCE
-Senior .NET Developer | City of San Antonio | San Antonio, TX
-August 2024 - Present
+Senior Java Software Developer | Schneider Electric | Carrollton, TX
+January 2025 - Present
 - Built APIs.
 """
     )
 
     document = Document(io.BytesIO(docx_bytes))
 
-    table = next(table for table in document.tables if table.cell(0, 0).text == "Languages")
-    assert len(table.rows) == 9
-    assert table.cell(0, 0).text == "Languages"
-    assert table.cell(0, 1).text == "C#, TypeScript, JavaScript, Python, T-SQL, PowerShell"
-    assert table.cell(1, 0).paragraphs[0].runs[0].bold is True
-    assert table.cell(1, 1).text.startswith(".NET 6/7/8, ASP.NET Core Web API")
+    skill_tables = [
+        table for table in document.tables
+        if table.rows and table.cell(0, 0).text == "Programming Languages"
+    ]
+    assert len(skill_tables) == 1
+    table = skill_tables[0]
+    assert len(table.rows) == 3
+    assert table.cell(0, 1).text == "Java, Python, SQL"
+    assert table.cell(1, 0).text == "Frameworks"
+    assert table.cell(1, 1).text == "Spring Boot, Hibernate"
+    assert ".NET 6/7/8" not in " ".join(
+        cell.text for current in document.tables for row in current.rows for cell in row.cells
+    )
+    assert sum(p.text == "TECHNICAL SKILLS" for p in document.paragraphs) == 1
+    assert not any(p.text.startswith("Programming Languages:") for p in document.paragraphs)
+
+
+def test_resume_docx_styles_split_role_title_as_large_bold_heading():
+    docx_bytes = build_resume_docx(
+        """
+TEJASRI DEGAM
+Senior Java Software Engineer
+Frisco, TX | email@example.com | 555-555-5555
+
+PROFESSIONAL EXPERIENCE
+Senior Java Software Developer
+Schneider Electric, Carrollton, TX | January 2025 - Present
+Project: Global customer platform modernization
+- Built Spring Boot APIs.
+Environment: Java, Spring Boot, AWS
+
+EDUCATION
+Bachelor of Technology | JNTU Hyderabad | 2019
+"""
+    )
+
+    document = Document(io.BytesIO(docx_bytes))
+    title = next(
+        p for p in document.paragraphs if p.text.startswith("Senior Java Software Developer")
+    )
+    assert title.style.name == "Resume Job Title"
+    assert title.runs[0].text == "Senior Java Software Developer"
+    assert title.runs[0].bold is True
+    assert title.runs[0].font.size.pt == 12
 
 
 def test_rebuild_resume_returns_prompt_only_without_keys(monkeypatch):
