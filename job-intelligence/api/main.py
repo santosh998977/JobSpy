@@ -22,10 +22,11 @@ from sqlalchemy.orm import Session
 
 from analytics import AnalyticsEngine
 from ai import rebuild_resume
-from ai.resume_keyword_plan import extract_target_title, normalized_hash
+from ai.resume_keyword_plan import build_keyword_plan, extract_target_title, normalized_hash
 from ai.resume_orchestrator import (
     GenerationMode,
     OrchestrationRequest,
+    PAID_GEMINI_MODEL,
     RefineRequest,
     orchestrate_resume,
     refine_resume,
@@ -58,6 +59,8 @@ from api.schemas import (
     ResumeLabProfileCreate,
     ResumeLabProfileOut,
     ResumeLabResumeUpdate,
+    ResumeLabGapRequest,
+    ResumeLabGapResponse,
     ResumeLabGenerateRequest,
     ResumeLabGenerateResponse,
     ResumeLabCoverLetterRequest,
@@ -83,7 +86,7 @@ from search import SearchEngine
 from storage.backups import backup_sqlite_database
 from storage.config import get_settings
 from storage.database import SessionLocal, get_session, init_database
-from storage.models import AIGenerationJob, AIGenerationStatus, Application, ChangeType, CoverLetterVersion, DocumentKind, Job, ResumeLabRun, ResumeVersion, SearchRun, UserProfile
+from storage.models import AIGenerationJob, AIGenerationStatus, Application, ChangeType, CoverLetterVersion, DocumentKind, Job, ResumeLabProfile, ResumeLabRun, ResumeVersion, SearchRun, UserProfile
 from storage.repository import JobRepository, ResumeProfileConflict
 from search.scoring import score_job
 from search.trust import score_trust
@@ -700,6 +703,7 @@ def save_resume_lab_profile_resume(
             resume_filename=payload.resume_filename,
             expected_source_version=payload.expected_source_version,
             only_if_empty=payload.only_if_empty,
+            verified_experience_notes=payload.verified_experience_notes,
         )
         session.commit()
         session.refresh(profile)
@@ -732,6 +736,37 @@ def remove_resume_lab_profile_resume(
     except ResumeProfileConflict as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _resume_lab_source(profile: ResumeLabProfile) -> tuple[str, str]:
+    resume = (profile.resume_text or "").strip()
+    notes = (profile.verified_experience_notes or "").strip()
+    if not notes:
+        return resume, profile.resume_sha256 or normalized_hash(resume)
+    source = (
+        f"{resume}\n\nUSER-VERIFIED EXPERIENCE NOTES (source facts only):\n{notes}"
+    )
+    return source, normalized_hash(profile.resume_sha256 or "", notes)
+
+
+@app.post("/resume-lab/gaps", response_model=ResumeLabGapResponse)
+def get_resume_lab_gaps(
+    payload: ResumeLabGapRequest,
+    session: Session = Depends(get_session),
+):
+    profile = JobRepository(session).get_resume_lab_profile(payload.profile_id)
+    if profile is None or not profile.resume_text:
+        raise HTTPException(status_code=404, detail="Resume Lab profile not found")
+    if profile.source_version != payload.source_version:
+        raise HTTPException(
+            status_code=409,
+            detail="The saved resume changed; reload before checking keywords",
+        )
+    source_text, _ = _resume_lab_source(profile)
+    plan = build_keyword_plan(
+        source_text, payload.job_description, target_title=payload.target_title
+    )
+    return ResumeLabGapResponse(missing_keywords=plan.unsupported[:10])
 
 
 def _resume_lab_run_response(run: ResumeLabRun, *, cache_hit: bool = False):
@@ -770,10 +805,11 @@ def generate_resume_lab_resume(
         raise HTTPException(status_code=409, detail="Attach and save a source resume first")
     if profile.source_version != payload.source_version:
         raise HTTPException(status_code=409, detail="The saved resume changed; reload before generating")
+    source_text, source_hash = _resume_lab_source(profile)
     title = extract_target_title(payload.target_title, payload.job_description)
     jd_hash = normalized_hash(payload.job_description)
     input_hash = normalized_hash(
-        profile.resume_sha256, payload.job_description, title,
+        source_hash, payload.job_description, title,
         payload.company_name or "", payload.mode,
     )
     cache_key = normalized_hash(
@@ -792,7 +828,7 @@ def generate_resume_lab_resume(
 
     result = orchestrate_resume(
         OrchestrationRequest(
-            source_resume=profile.resume_text,
+            source_resume=source_text,
             job_description=payload.job_description,
             target_title=title,
             company_name=payload.company_name,
@@ -808,7 +844,7 @@ def generate_resume_lab_resume(
         id=str(uuid.uuid4()),
         idempotency_key=(payload.idempotency_key if not force else f"{payload.idempotency_key[:96]}:force:{uuid.uuid4().hex[:12]}"),
         cache_key=cache_key, profile_id=profile.id, mode=payload.mode,
-        status=result.status, source_hash=profile.resume_sha256,
+        status=result.status, source_hash=source_hash,
         input_hash=input_hash, job_description_hash=jd_hash,
         target_title=title, company_name=payload.company_name,
         content_text=result.resume_text, ats_score=result.ats_score,
@@ -832,38 +868,34 @@ def _gemini_cover_letter_from_run(
 
     prompt = (
         "Write a concise, natural 3-4 paragraph cover letter in plain text. "
-        "Use only facts present in the generated resume. Do not use bullet points or AI filler.\n\n"
+        "Use only facts present in the generated resume. Do not use bullet points or AI filler. "
+        "Use concrete details, varied sentence lengths, and a direct professional tone. "
+        "Avoid clichés such as thrilled, excited, passionate, leverage, utilize, synergy, "
+        "dynamic, cutting-edge, and proven track record. Never invent metrics.\n\n"
         f"TARGET TITLE: {target_title}\nCOMPANY: {company_name or 'Not specified'}\n\n"
         f"JOB DESCRIPTION:\n{job_description}\n\nGENERATED REVIEWED RESUME:\n{generated_resume}"
     )
-    failures: list[str] = []
-    for index, key in enumerate(settings.gemini_api_keys, start=1):
-        provider = {
-            "name": "gemini", "base_url": settings.gemini_base_url,
-            "api_key": key, "model": settings.gemini_model,
-            "key_index": str(index),
-        }
-        try:
-            text = _chat_completion(
-                provider=provider,
-                messages=[{"role": "user", "content": prompt}],
-                settings=settings,
-            )
-            return CoverLetterResponse(
-                provider=f"gemini (key {index})", model=settings.gemini_model,
-                cover_letter=text.strip(),
-            )
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code not in (408, 429) and exc.response.status_code < 500:
-                raise HTTPException(status_code=502, detail="Gemini rejected the cover-letter request") from exc
-            failures.append(f"key {index}: temporary failure")
-        except (httpx.TimeoutException, httpx.ConnectError):
-            failures.append(f"key {index}: temporary failure")
-    if not settings.gemini_api_keys:
-        raise HTTPException(status_code=503, detail="No Gemini key is configured")
-    raise HTTPException(
-        status_code=503,
-        detail="All Gemini keys failed temporarily. OpenRouter was not called.",
+    provider = {
+        "name": "openrouter", "base_url": settings.openrouter_base_url,
+        "api_key": settings.openrouter_api_key or "", "model": PAID_GEMINI_MODEL,
+    }
+    if not provider["api_key"]:
+        raise HTTPException(status_code=503, detail="OpenRouter is not configured")
+    try:
+        text = _chat_completion(
+            provider=provider,
+            messages=[{"role": "user", "content": prompt}],
+            settings=settings,
+        )
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        temporary = status in (408, 429) or status >= 500
+        detail = "Paid Gemini is temporarily unavailable" if temporary else "Paid Gemini rejected the cover-letter request"
+        raise HTTPException(status_code=503 if temporary else 502, detail=detail) from exc
+    except (httpx.TimeoutException, httpx.ConnectError) as exc:
+        raise HTTPException(status_code=503, detail="Paid Gemini is temporarily unavailable") from exc
+    return CoverLetterResponse(
+        provider="openrouter", model=PAID_GEMINI_MODEL, cover_letter=text.strip()
     )
 
 
@@ -875,10 +907,11 @@ def refine_resume_lab_resume(
     profile = repository.get_resume_lab_profile(payload.profile_id)
     if profile is None or not profile.resume_text:
         raise HTTPException(status_code=404, detail="Resume Lab profile not found")
+    source_text, source_hash = _resume_lab_source(profile)
     try:
         result = refine_resume(
             RefineRequest(
-                source_resume=profile.resume_text,
+                source_resume=source_text,
                 current_resume=payload.current_resume,
                 job_description=payload.job_description,
                 target_title=payload.target_title,
@@ -905,10 +938,27 @@ def refine_resume_lab_resume(
             status_code=502,
             detail=f"Refinement did not produce a valid resume. {reasons}".strip(),
         )
-    return ResumeLabRefineResponse(
-        status=result.status, resume_text=result.resume_text,
-        events=[GenerationEventOut(**asdict(e)) for e in result.events],
+    input_hash = normalized_hash(
+        source_hash, payload.job_description, payload.target_title,
+        payload.company_name or "", payload.mode,
     )
+    run = ResumeLabRun(
+        id=str(uuid.uuid4()), idempotency_key=f"refine:{uuid.uuid4()}",
+        cache_key=normalized_hash(input_hash, payload.current_resume, payload.instruction),
+        profile_id=profile.id, mode=payload.mode, status=result.status,
+        source_hash=source_hash,
+        input_hash=input_hash,
+        job_description_hash=normalized_hash(payload.job_description),
+        target_title=payload.target_title, company_name=payload.company_name,
+        content_text=result.resume_text, ats_score=result.ats_score,
+        events=[asdict(event) for event in result.events],
+        usage={**result.usage, "attempts": result.attempts},
+        original_titles=result.original_titles, error=None,
+    )
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+    return _resume_lab_run_response(run)
 
 
 @app.post("/resume-lab/cover-letter", response_model=CoverLetterResponse)

@@ -208,6 +208,7 @@ export type ResumeLabProfile = {
   resume_text: string | null;
   resume_filename: string | null;
   resume_sha256: string | null;
+  verified_experience_notes: string;
   source_version: number;
   updated_at: string;
 };

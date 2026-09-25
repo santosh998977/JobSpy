@@ -13,6 +13,32 @@ from storage.models import Base
 from storage.repository import JobRepository
 
 
+def test_cover_letter_uses_paid_openrouter_gemini(monkeypatch):
+    from api import main
+
+    calls = []
+
+    def fake_completion(*, provider, messages, settings):
+        calls.append((provider, messages))
+        return "Dear Hiring Manager,\n\nI build reliable software."
+
+    monkeypatch.setattr("ai.resume_rebuilder._chat_completion", fake_completion)
+    monkeypatch.setattr(main.settings, "openrouter_api_key", "paid-openrouter-key")
+
+    result = main._gemini_cover_letter_from_run(
+        generated_resume="Engineer with Python and Azure experience.",
+        job_description="Seeking an engineer with Python and Azure experience.",
+        target_title="Software Engineer",
+        company_name="Example",
+    )
+
+    assert result.provider == "openrouter"
+    assert result.model == "google/gemini-3.1-pro-preview"
+    assert calls[0][0]["name"] == "openrouter"
+    assert calls[0][0]["api_key"] == "paid-openrouter-key"
+    assert "proven track record" in calls[0][1][0]["content"].lower()
+
+
 def test_generation_is_cached_for_identical_inputs(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
@@ -134,7 +160,31 @@ def test_refine_endpoint_serializes_successful_events(monkeypatch):
         )
 
         assert response.status_code == 200
-        assert response.json()["status"] == "REVIEWED"
-        assert response.json()["events"][0]["code"] == "REFINE_SUCCEEDED"
+        body = response.json()
+        assert body["status"] == "REVIEWED"
+        assert body["events"][0]["code"] == "REFINE_SUCCEEDED"
+        assert repository.get_resume_lab_run(body["run_id"]).content_text == body["resume_text"]
+
+        cover_input = {}
+
+        def fake_cover(**kwargs):
+            cover_input.update(kwargs)
+            return CoverLetterResponse(
+                provider="openrouter", model="google/gemini-3.1-pro-preview",
+                cover_letter="Dear Hiring Manager",
+            )
+
+        monkeypatch.setattr("api.main._gemini_cover_letter_from_run", fake_cover)
+        cover = TestClient(app).post(
+            "/resume-lab/cover-letter",
+            json={
+                "run_id": body["run_id"],
+                "job_description": "Senior AI Engineer requires Python, Azure, APIs, and testing. " * 2,
+                "target_title": "Senior AI Engineer",
+                "company_name": None,
+            },
+        )
+        assert cover.status_code == 200
+        assert cover_input["generated_resume"] == body["resume_text"]
     finally:
         app.dependency_overrides.clear()

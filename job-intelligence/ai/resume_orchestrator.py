@@ -74,11 +74,24 @@ CompletionFn = Callable[[dict[str, str], list[dict[str, str]]], str]
 
 _BULLET_GLYPH_RE = re.compile(r"^(\s*)[▪▶●◆■□○◦‣∙·–—]\s+")
 
+PAID_GEMINI_MODEL = "google/gemini-3.1-pro-preview"
+
 _OPENROUTER_WRITER_MODELS = (
     "deepseek/deepseek-v4.1-flash",
     "z-ai/glm-5.3",
     "moonshotai/kimi-k2.6",
     "qwen/qwen3.8-max-0902",
+    PAID_GEMINI_MODEL,
+)
+
+_NATURAL_STYLE_RULES = (
+    "Use direct, specific recruiter-facing language grounded in the source. "
+    "Vary sentence and bullet openings and lengths. Avoid generic AI-style phrases including "
+    "leverage, utilize, spearhead, robust, seamless, pivotal, transformative, synergy, "
+    "results-driven, detail-oriented, passionate, cutting-edge, best-in-class, and proven track record. "
+    "Avoid em dashes and repetitive paired verbs. Never fabricate metrics."
+    " Integrate relevant user-verified notes into appropriate resume sections. "
+    "Do not output a separate verified-notes or supplemental-notes section."
 )
 
 
@@ -190,14 +203,16 @@ def _messages(request: OrchestrationRequest, *, draft: str | None = None) -> lis
             "Write the complete tailored resume. Required supported JD keywords that must appear "
             f"naturally: {supported}. Unsupported JD keywords that must NOT be added: {unsupported}. "
             "Replace the displayed titles of the two most recent roles with the target title. "
-            "Preserve employers, dates, education, contact details, responsibilities, and every other fact."
+            "Preserve employers, dates, education, contact details, responsibilities, and every other fact. "
+            + _NATURAL_STYLE_RULES
             + _length_instruction(request.target_pages)
         )
     else:
         task = (
             "Review and return the complete corrected resume. Treat the source resume as the sole "
             "source of truth. Remove unsupported claims, AI filler, promotional wording, repetition, "
-            "and uniform bullet patterns. Preserve all roles."
+            "and uniform bullet patterns. Preserve all roles. "
+            + _NATURAL_STYLE_RULES
             + _length_instruction(request.target_pages)
             + "\n\nWRITER DRAFT:\n" + draft
         )
@@ -229,7 +244,8 @@ def _refine_messages(request: RefineRequest) -> list[dict[str, str]]:
         {"role": "system", "content": (
             "You are a truthful ATS resume specialist. Output plain resume text only. "
             "The source resume is the sole source of truth: never add an employer, date, "
-            "credential, metric, or technology that does not appear in it."
+            "credential, metric, or technology that does not appear in it. "
+            + _NATURAL_STYLE_RULES
         )},
         {"role": "user", "content": (
             f"TARGET TITLE: {request.target_title}\n\nSOURCE RESUME (truth baseline):\n"
@@ -247,6 +263,7 @@ def refine_resume(
     settings: Settings,
     *,
     completion: CompletionFn = _default_completion,
+    score_fn: Callable[[str, str], int] = compute_ats_score,
 ) -> OrchestrationResult:
     """Refine an already-generated resume through the same chain and validation
     that generation uses. Kept separate from orchestrate_resume because a refine
@@ -266,13 +283,16 @@ def refine_resume(
     chain: list[dict[str, str]] = []
     if request.writer_model:
         chain.append(_provider_for(request.writer_provider or "omniroute", request.writer_model, settings))
-    for model in (settings.omniroute_resume_reviewer_model,
-                  settings.omniroute_resume_reviewer_fallback_model):
-        candidate = _provider("omniroute", settings.omniroute_base_url,
-                              settings.omniroute_api_key, model)
+    for name, model in (
+        ("openrouter", _OPENROUTER_WRITER_MODELS[1]),
+        ("openrouter", _OPENROUTER_WRITER_MODELS[-1]),
+    ):
+        candidate = _provider_for(name, model, settings)
         if all(candidate["model"] != existing["model"] for existing in chain):
             chain.append(candidate)
 
+    baseline_score = score_fn(request.current_resume, request.job_description)
+    score_dropped = False
     for attempt, provider in enumerate(chain):
         emit("REFINE_STARTED" if attempt == 0 else "REFINE_FALLBACK",
              "info" if attempt == 0 else "warning", provider, "Refinement started")
@@ -292,8 +312,28 @@ def refine_resume(
                 f"Refined output failed validation: {type(exc).__name__}: {exc}",
             )
             continue
+        candidate_score = score_fn(validated, request.job_description)
+        if candidate_score < baseline_score:
+            score_dropped = True
+            emit(
+                "REFINE_SCORE_DROPPED", "warning", provider,
+                f"Refinement scored {candidate_score}; keeping the {baseline_score}-point resume",
+            )
+            continue
         emit("REFINE_SUCCEEDED", "info", provider, "Refinement completed")
-        return OrchestrationResult(status="REVIEWED", resume_text=validated, events=events)
+        return OrchestrationResult(
+            status="REVIEWED", resume_text=validated, events=events, ats_score=candidate_score
+        )
+
+    if score_dropped:
+        emit(
+            "REFINE_KEPT_CURRENT", "info", chain[-1],
+            "All refinements reduced the ATS score; kept the current resume",
+        )
+        return OrchestrationResult(
+            status="REVIEWED", resume_text=request.current_resume,
+            events=events, ats_score=baseline_score,
+        )
 
     return OrchestrationResult(status="FAILED", resume_text=None, events=events)
 
@@ -319,46 +359,19 @@ def orchestrate_resume(
             timestamp=datetime.now(UTC).isoformat(), message=message,
         ))
 
-    nvidia_fallback = _provider(
-        "nvidia", settings.nvidia_base_url, settings.nvidia_api_key,
-        settings.nvidia_resume_writer_fallback_model,
-    )
     openrouter_writers = [
         _provider_for("openrouter", model, settings)
         for model in _OPENROUTER_WRITER_MODELS
     ]
-    paid_writer = openrouter_writers[0]
-    reviewer_primary = _provider("omniroute", settings.omniroute_base_url, settings.omniroute_api_key, settings.omniroute_resume_reviewer_model)
-    reviewer_fallback = _provider("omniroute", settings.omniroute_base_url, settings.omniroute_api_key, settings.omniroute_resume_reviewer_fallback_model)
-    reviewer_openrouter = openrouter_writers[1]
-    omniroute_writer = _provider(
-        "omniroute", settings.omniroute_base_url, settings.omniroute_api_key,
-        settings.omniroute_resume_writer_model,
-    )
-    omniroute_writer_best = _provider(
-        "omniroute", settings.omniroute_base_url, settings.omniroute_api_key,
-        settings.omniroute_resume_writer_best_model,
-    )
-    # Each tier gets its own writer chain, tried in order. Nemotron Ultra is
-    # deliberately absent: it burns the full per-call timeout before failing,
-    # which pushed total generation past the client's abort window.
-    if request.speed == "fast":
-        writer_chain = [nvidia_fallback, omniroute_writer]
-    elif request.speed == "best":
-        writer_chain = [omniroute_writer_best, omniroute_writer, paid_writer]
-    else:
-        writer_chain = [omniroute_writer, nvidia_fallback]
+    gemini_writer = openrouter_writers[-1]
+    writer_chain = openrouter_writers
     if request.writer_model:
         # An explicitly chosen model leads; the tier chain stays behind it as
         # fallback so a bad pick degrades instead of failing outright.
         chosen = _provider_for(
             request.writer_provider or "omniroute", request.writer_model, settings
         )
-        fallbacks = (
-            openrouter_writers + writer_chain
-            if chosen["name"] == "openrouter"
-            else writer_chain
-        )
+        fallbacks = openrouter_writers
         writer_chain = [chosen] + [
             p for p in fallbacks if p["model"] != chosen["model"]
         ]
@@ -380,13 +393,14 @@ def orchestrate_resume(
         return OrchestrationResult(status="FAILED", resume_text=None, events=events)
     emit("WRITER_SUCCEEDED", "info", "writer", writer, "Resume writer completed")
 
-    emit("REVIEWER_STARTED", "info", "reviewer", reviewer_primary, "Claude Haiku review started")
+    reviewer_primary = openrouter_writers[1]
+    reviewer_fallback = gemini_writer
+    emit("REVIEWER_STARTED", "info", "reviewer", reviewer_primary, "Paid review started")
     successful_reviewer = reviewer_primary
     reviewed = None
     for reviewer, message in (
-        (reviewer_primary, "Claude Haiku failed; Claude Sonnet review started"),
-        (reviewer_fallback, "Claude Sonnet failed; OpenRouter GLM review started"),
-        (reviewer_openrouter, "OpenRouter GLM review started"),
+        (reviewer_primary, "OpenRouter review started"),
+        (reviewer_fallback, "OpenRouter failed; Google Gemini review started"),
     ):
         if reviewer is not reviewer_primary:
             emit("REVIEWER_FALLBACK", "warning", "reviewer", reviewer, message)
@@ -397,7 +411,7 @@ def orchestrate_resume(
         except Exception:
             continue
     if reviewed is None:
-        emit("FINAL_FAILURE", "error", "reviewer", reviewer_openrouter, "All resume reviewers failed")
+        emit("FINAL_FAILURE", "error", "reviewer", reviewer_fallback, "All resume reviewers failed")
         return OrchestrationResult(
             status="WRITER_ONLY", resume_text=None, diagnostic_draft=draft, events=events
         )
@@ -438,7 +452,10 @@ def orchestrate_resume(
         )
         missing = [term for term in plan.supported if term.lower() not in best_text.lower()]
         repair_messages = [
-            {"role": "system", "content": "Return a complete truthful resume. Change only summary, skills, and the two most recent roles."},
+            {"role": "system", "content": (
+                "Return a complete truthful resume. Change only summary, skills, and the two most recent roles. "
+                + _NATURAL_STYLE_RULES
+            )},
             {"role": "user", "content": (
                 f"SOURCE FACTS:\n{request.source_resume}\n\nCURRENT REVIEWED RESUME:\n{best_text}\n\n"
                 f"Add these supported exact JD phrases naturally: {', '.join(missing) or 'improve existing placement'}. "

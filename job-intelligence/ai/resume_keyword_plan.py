@@ -7,7 +7,9 @@ import re
 
 TECH_TERMS = (
     "C#", ".NET", "ASP.NET Core", "Java", "Python", "PyTorch", "TensorFlow",
+    "Spring Boot", "Hibernate", "Kafka", "Maven", "Gradle", "JUnit", "Mockito",
     "Azure", "AWS", "GCP", "SQL", "SQL Server", "PostgreSQL", "MongoDB",
+    "Oracle", "Jenkins",
     "React", "Angular", "TypeScript", "JavaScript", "REST API", "REST APIs",
     "Microservices", "Docker", "Kubernetes", "LangChain", "LLM", "RAG",
     "Machine Learning", "Artificial Intelligence", "NLP", "CI/CD", "Git",
@@ -33,6 +35,14 @@ def _normalize_term(value: str) -> str:
     return ALIASES.get(normalized, normalized)
 
 
+def _searchable_text(value: str) -> str:
+    return re.sub(r"https?://\S+|www\.\S+|\b\S+@\S+\b", " ", value.lower())
+
+
+def _term_match(text: str, term: str) -> re.Match[str] | None:
+    return re.search(rf"(?<!\w){re.escape(_normalize_term(term))}(?!\w)", text)
+
+
 def normalized_hash(*parts: str) -> str:
     normalized = "\x1f".join(re.sub(r"\s+", " ", part).strip() for part in parts)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
@@ -51,19 +61,19 @@ def extract_target_title(explicit_title: str | None, job_description: str) -> st
 def build_keyword_plan(
     source_resume: str, job_description: str, *, target_title: str | None = None
 ) -> KeywordPlan:
-    source = _normalize_term(source_resume)
-    jd = _normalize_term(job_description)
+    source = _searchable_text(source_resume)
+    jd = _searchable_text(job_description)
     title = _normalize_term(target_title or "")
-    found: list[str] = []
+    found: list[tuple[int, str]] = []
     for term in TECH_TERMS:
-        normalized = _normalize_term(term)
-        if normalized in jd and normalized not in {_normalize_term(item) for item in found}:
-            found.append(term)
-    found.sort(key=lambda term: jd.index(_normalize_term(term)))
-    supported = [term for term in found if _normalize_term(term) in source]
+        match = _term_match(jd, term)
+        if match:
+            found.append((match.start(), term))
+    found.sort()
+    supported = [term for _, term in found if _term_match(source, term)]
     unsupported = [
-        term for term in found
-        if _normalize_term(term) not in source and _normalize_term(term) != title
+        term for _, term in found
+        if not _term_match(source, term) and _normalize_term(term) != title
     ]
     placements = {
         term: "skills" if len(term.split()) <= 2 else "recent_roles"

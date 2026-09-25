@@ -36,6 +36,22 @@ def test_keyword_plan_requires_only_source_supported_jd_terms():
     assert plan.unsupported == ["LangChain", "Kubernetes"]
 
 
+def test_keyword_plan_ignores_urls_and_partial_technology_names():
+    plan = build_keyword_plan(
+        "JavaScript engineer. Portfolio: https://example.net/java",
+        "JavaScript role. Apply at https://careers.example.net/jobs/java",
+        target_title="Frontend Developer",
+    )
+    assert plan.supported == ["JavaScript"]
+    assert plan.unsupported == []
+
+    plan = build_keyword_plan(
+        "Portfolio: https://example.net",
+        "Build .NET services with Azure.",
+    )
+    assert ".NET" in plan.unsupported
+
+
 def test_replace_two_recent_titles_preserves_older_role_and_employers():
     transformed, originals = replace_two_recent_titles(THREE_ROLE_RESUME, "AI Engineer")
     assert originals == ["Senior .NET Developer", "Software Engineer"]

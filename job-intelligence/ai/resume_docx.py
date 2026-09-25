@@ -491,10 +491,16 @@ def _extract_technical_skill_rows(resume_text: str) -> list[tuple[str, str]]:
             continue
         if in_skills and _is_section_heading(line):
             break
-        if in_skills and ":" in line:
-            label, value = (part.strip() for part in line.split(":", 1))
-            if label and value:
-                rows.append((label, value))
+        if not in_skills:
+            continue
+        label, separator, value = line.partition(":")
+        if separator and label.strip() and value.strip():
+            rows.append((label.strip(), value.strip()))
+        elif rows and line:
+            previous_label, previous_value = rows[-1]
+            rows[-1] = (previous_label, f"{previous_value} {line}")
+        elif line:
+            rows.append(("Skills", line))
     return rows
 
 
@@ -600,9 +606,7 @@ def _prepare_resume_lines(resume_text: str) -> list[str]:
         if heading == "technical skills":
             lines.append("TECHNICAL SKILLS")
             i += 1
-            while i < len(raw_lines) and _normalized_heading(raw_lines[i]) not in {
-                "professional experience", "experience", "work experience"
-            }:
+            while i < len(raw_lines) and not _is_section_heading(raw_lines[i]):
                 i += 1
             continue
 
