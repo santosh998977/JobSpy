@@ -232,6 +232,12 @@ EVIDENCE GATE — apply this before writing:
 - Put unsupported Job Description requirements in KEYWORD GAPS instead of the resume.
 - Before returning, compare every number, employer, date, degree, certification, and named technology against the Base Resume. Remove anything unsupported.
 
+COMPLETE EXPERIENCE BLOCKS:
+- For every role, include one concise Project: description grounded in the Base Resume.
+- Add or expand varied achievement bullets only when source evidence supports the claim, using supported JD keywords naturally rather than repeating keyword lists.
+- Place one Environment: line after the final bullet as the final line of every role.
+- Never add unsupported JD keywords as candidate experience; keep them in KEYWORD GAPS.
+
 ---
 
 OUTPUT FORMAT — output these three sections in this exact order:

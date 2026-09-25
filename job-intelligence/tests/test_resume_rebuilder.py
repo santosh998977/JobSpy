@@ -368,6 +368,22 @@ January 2025 - Present
     assert not any(p.text.startswith("Programming Languages:") for p in document.paragraphs)
 
 
+def test_rebuild_prompt_requires_complete_truthful_experience_blocks():
+    prompt = build_resume_prompt(
+        base_resume=BASE_RESUME,
+        job_description=JOB_DESCRIPTION,
+        profile_name=".NET Developer",
+        target_title="Senior .NET Developer",
+    )
+
+    assert "Project:" in prompt
+    assert "Environment:" in prompt
+    assert "final line of every role" in prompt
+    assert "supported JD keywords" in prompt
+    assert "unsupported JD keywords" in prompt
+    assert "vary" in prompt.lower()
+
+
 def test_resume_docx_styles_split_role_title_as_large_bold_heading():
     docx_bytes = build_resume_docx(
         """

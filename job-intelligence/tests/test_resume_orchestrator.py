@@ -287,6 +287,29 @@ def test_page_target_never_asks_to_drop_roles():
     assert "Condense by shortening and merging bullets, not by removing roles." in fake.prompts[0]
 
 
+def test_writer_prompt_requires_complete_humanized_role_blocks():
+    fake = FakeCompletion()
+    orchestrate_resume(request(), settings(), completion=fake)
+
+    prompt = fake.prompts[0]
+    assert "Project:" in prompt
+    assert "Environment:" in prompt
+    assert "final line of every role" in prompt
+    assert "supported JD keywords" in prompt
+    assert "unsupported JD keywords" in prompt
+    assert "vary" in prompt.lower()
+
+
+def test_page_target_preserves_project_and_environment_lines():
+    fake = FakeCompletion()
+    orchestrate_resume(_paged_request(1), settings(), completion=fake)
+
+    prompt = fake.prompts[0]
+    assert "Keep one concise Project line" in prompt
+    assert "Environment line as the final line of every role" in prompt
+    assert "drop their Environment lines" not in prompt
+
+
 def test_two_and_three_page_targets_use_larger_budgets():
     for pages, budget in ((2, "950 words"), (3, "1400 words")):
         fake = FakeCompletion()

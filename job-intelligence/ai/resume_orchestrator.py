@@ -154,6 +154,14 @@ def _completion_with_settings(
 # the model how much to condense; employers and dates are never dropped.
 _PAGE_WORD_BUDGET = {1: 550, 2: 950, 3: 1400}
 
+_ROLE_BLOCK_INSTRUCTION = (
+    " For every role, include one concise Project: description grounded in the source resume, "
+    "vary the achievement bullets so supported JD keywords read naturally, and place one "
+    "Environment: line after the final bullet as the final line of every role. Add or expand "
+    "bullets only when the source resume supports the claim. Never add unsupported JD keywords "
+    "as candidate experience."
+)
+
 
 def _length_instruction(target_pages: int | None) -> str:
     if not target_pages:
@@ -165,8 +173,9 @@ def _length_instruction(target_pages: int | None) -> str:
         "location, and date range exactly as in the source, and keep the "
         "Education and contact details complete. Condense by shortening and "
         "merging bullets, not by removing roles. Give the two most recent roles "
-        "the most detail; reduce older roles to their strongest 2 to 4 bullets "
-        "and drop their Environment lines if space requires it."
+        "the most detail; reduce older roles to their strongest 2 to 4 bullets. "
+        "Keep one concise Project line and an Environment line as the final line of every role. "
+        "Meet the page target by tightening or merging bullets, never by removing those structural lines."
     )
 
 
@@ -192,6 +201,7 @@ def _messages(request: OrchestrationRequest, *, draft: str | None = None) -> lis
             + _length_instruction(request.target_pages)
             + "\n\nWRITER DRAFT:\n" + draft
         )
+    task += _ROLE_BLOCK_INSTRUCTION
     return [
         {"role": "system", "content": "You are a truthful ATS resume specialist. Output plain resume text only."},
         {"role": "user", "content": (
@@ -226,6 +236,7 @@ def _refine_messages(request: RefineRequest) -> list[dict[str, str]]:
             f"{request.source_resume}\n\nJOB DESCRIPTION:\n{request.job_description}\n\n"
             f"CURRENT RESUME:\n{request.current_resume}\n\n"
             f"Apply this change and return the complete resume:\n{request.instruction}"
+            + _ROLE_BLOCK_INSTRUCTION
             + _length_instruction(request.target_pages)
         )},
     ]
