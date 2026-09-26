@@ -81,6 +81,7 @@ def test_generation_uses_verified_notes_and_changes_source_hash(monkeypatch):
                 "target_title": "Senior Java Developer",
                 "company_name": "Example",
                 "idempotency_key": "verified-notes-test-0001",
+                "confirm_all_jd_keywords": True,
             },
         )
         assert response.status_code == 200

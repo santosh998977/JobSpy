@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import httpx
 import pytest
 from pydantic import ValidationError
@@ -111,6 +113,19 @@ def test_resume_lab_request_rejects_free_provider():
             writer_provider="omniroute", writer_model="auto/best-free",
             job_description="A sufficiently detailed job description for validation.",
             idempotency_key="1234567890abcdef",
+            confirm_all_jd_keywords=True,
+        )
+
+
+def test_resume_lab_request_requires_keyword_confirmation():
+    with pytest.raises(ValidationError):
+        ResumeLabGenerateRequest(
+            profile_id=1,
+            source_version=1,
+            mode="HYBRID",
+            job_description="Java and Python full-stack engineering position. " * 2,
+            idempotency_key="1234567890abcdef",
+            confirm_all_jd_keywords=False,
         )
 
 
@@ -238,6 +253,23 @@ def test_internal_score_ignores_job_description_prose():
     assert result.ats_score == 100
     assert "ATS_REPAIR_STARTED" not in result.event_codes
     assert "ATS_TARGET_REACHED" in result.event_codes
+
+
+def test_confirmed_generation_returns_exact_100_percent_coverage():
+    strict_request = replace(request(), confirm_all_jd_keywords=True)
+
+    result = orchestrate_resume(
+        strict_request,
+        settings(repairs=1),
+        completion=FakeCompletion(),
+    )
+
+    assert result.status == "REVIEWED"
+    assert result.ats_score == 100
+    assert all(
+        term.lower() in result.resume_text.lower()
+        for term in ("Python", "Azure", "REST API", "LangChain", "Kubernetes")
+    )
 
 
 def _request_with_model(provider, model, speed="balanced"):

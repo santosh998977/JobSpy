@@ -73,6 +73,7 @@ def test_generation_is_cached_for_identical_inputs(monkeypatch):
             "job_description": "AI Engineer requires Python and Azure experience. " * 2,
             "target_title": "AI Engineer", "company_name": "Example",
             "idempotency_key": "first-request-0001",
+            "confirm_all_jd_keywords": True,
         }
         first = client.post("/resume-lab/generate", json=payload)
         second = client.post("/resume-lab/generate", json={**payload, "idempotency_key": "second-request-0002"})

@@ -69,7 +69,11 @@ def extract_target_title(explicit_title: str | None, job_description: str) -> st
 
 
 def build_keyword_plan(
-    source_resume: str, job_description: str, *, target_title: str | None = None
+    source_resume: str,
+    job_description: str,
+    *,
+    target_title: str | None = None,
+    require_all: bool = False,
 ) -> KeywordPlan:
     source = _searchable_text(source_resume)
     jd = _searchable_text(job_description)
@@ -80,6 +84,13 @@ def build_keyword_plan(
         if match:
             found.append((match.start(), term))
     found.sort()
+    if require_all:
+        terms = [term for _, term in found]
+        return KeywordPlan(
+            supported=terms,
+            unsupported=[],
+            placements={term: "skills" for term in terms},
+        )
     supported = [term for _, term in found if _term_match(source, term)]
     unsupported = [
         term for _, term in found
@@ -90,6 +101,21 @@ def build_keyword_plan(
         for term in supported
     }
     return KeywordPlan(supported=supported, unsupported=unsupported, placements=placements)
+
+
+def ensure_keyword_coverage(resume_text: str, required: list[str]) -> str:
+    missing = [term for term in required if term.lower() not in resume_text.lower()]
+    if not missing:
+        return resume_text
+
+    verified = "Verified JD Keywords: " + ", ".join(missing)
+    experience = re.search(
+        r"(?im)^\s*(?:professional |work )?experience\s*:?\s*$", resume_text
+    )
+    if experience:
+        prefix = "" if re.search(r"(?im)^\s*technical skills\s*:?\s*$", resume_text) else "TECHNICAL SKILLS\n"
+        return resume_text[:experience.start()].rstrip() + f"\n{prefix}{verified}\n\n" + resume_text[experience.start():]
+    return resume_text.rstrip() + f"\n\nTECHNICAL SKILLS\n{verified}"
 
 
 def replace_two_recent_titles(resume_text: str, target_title: str) -> tuple[str, list[str]]:

@@ -8,7 +8,11 @@ from typing import Callable
 
 import httpx
 
-from ai.resume_keyword_plan import build_keyword_plan, replace_two_recent_titles
+from ai.resume_keyword_plan import (
+    build_keyword_plan,
+    ensure_keyword_coverage,
+    replace_two_recent_titles,
+)
 from ai.resume_rebuilder import (
     _chat_completion,
     _extract_tailored_resume,
@@ -39,6 +43,7 @@ class OrchestrationRequest:
     writer_provider: str | None = None
     writer_model: str | None = None
     target_pages: int | None = None
+    confirm_all_jd_keywords: bool = False
 
 
 @dataclass
@@ -194,7 +199,10 @@ def _length_instruction(target_pages: int | None) -> str:
 
 def _messages(request: OrchestrationRequest, *, draft: str | None = None) -> list[dict[str, str]]:
     plan = build_keyword_plan(
-        request.source_resume, request.job_description, target_title=request.target_title
+        request.source_resume,
+        request.job_description,
+        target_title=request.target_title,
+        require_all=request.confirm_all_jd_keywords,
     )
     supported = ", ".join(plan.supported) or "None"
     unsupported = ", ".join(plan.unsupported) or "None"
@@ -432,7 +440,10 @@ def orchestrate_resume(
     titled, originals = replace_two_recent_titles(validated, request.target_title)
     best_text = titled
     plan = build_keyword_plan(
-        request.source_resume, request.job_description, target_title=request.target_title
+        request.source_resume,
+        request.job_description,
+        target_title=request.target_title,
+        require_all=request.confirm_all_jd_keywords,
     )
     # Score against the terms the repair loop can actually act on. Scoring every
     # JD token instead counts prose ("verbal", "desirable", "qualifications")
@@ -486,6 +497,26 @@ def orchestrate_resume(
         candidate_score = score_fn(candidate, request.job_description)
         if candidate_score > best_score:
             best_text, best_score = candidate, candidate_score
+    if request.confirm_all_jd_keywords:
+        completed_text = ensure_keyword_coverage(best_text, plan.supported)
+        if completed_text != best_text:
+            best_text = completed_text
+            best_score = _supported_coverage(best_text, plan.supported)
+            emit(
+                "ATS_KEYWORDS_COMPLETED", "info", "ats", successful_reviewer,
+                "Added remaining user-confirmed JD keywords to Technical Skills",
+            )
+        if best_score < 100:
+            missing = [term for term in plan.supported if term.lower() not in best_text.lower()]
+            emit(
+                "REQUIRED_KEYWORDS_MISSING", "error", "ats", successful_reviewer,
+                "Missing required JD keywords: " + ", ".join(missing),
+            )
+            return OrchestrationResult(
+                status="FAILED", resume_text=None, diagnostic_draft=best_text,
+                events=events, original_titles=originals, ats_score=best_score,
+                attempts=attempts,
+            )
     final_code = "ATS_TARGET_REACHED" if best_score >= settings.resume_ats_target else "ATS_TARGET_NOT_REACHED"
     emit(
         final_code,

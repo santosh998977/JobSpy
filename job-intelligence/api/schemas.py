@@ -195,6 +195,7 @@ class ResumeLabGenerateRequest(BaseModel):
     target_title: str | None = Field(default=None, max_length=500)
     company_name: str | None = Field(default=None, max_length=255)
     idempotency_key: str = Field(min_length=16, max_length=128)
+    confirm_all_jd_keywords: Literal[True]
     force_refresh: bool = False
 
 

@@ -837,6 +837,7 @@ def generate_resume_lab_resume(
             target_pages=payload.target_pages,
             writer_provider=payload.writer_provider,
             writer_model=payload.writer_model,
+            confirm_all_jd_keywords=payload.confirm_all_jd_keywords,
         ),
         settings,
     )

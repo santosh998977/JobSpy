@@ -1,3 +1,4 @@
+from ai import resume_keyword_plan
 from ai.resume_keyword_plan import (
     build_keyword_plan,
     normalized_hash,
@@ -97,7 +98,7 @@ def test_placeholder_target_title_never_replaces_real_titles_or_employers():
 def test_keyword_plan_covers_supported_healthcare_full_stack_jd_phrases():
     source = (
         "Cross-functional Java J2EE engineer using Spring Boot, React, TypeScript, and Python. "
-        "Built data processing batch validation with SQL, NoSQL, search, Azure App Services, "
+        "Built data processing batch validation with SQL, NoSQL, search, indexing, Azure App Services, "
         "Docker, Kubernetes, GitHub Actions, test-driven development, GitHub Copilot, "
         "prompt engineering, and code review."
     )
@@ -117,6 +118,30 @@ def test_keyword_plan_covers_supported_healthcare_full_stack_jd_phrases():
         "GitHub Copilot", "Prompt engineering", "Code review",
     } <= set(plan.supported)
     assert {"AKS", "Cosmos DB"} <= set(plan.unsupported)
+
+
+def test_confirmed_keyword_plan_requires_every_detected_jd_term():
+    plan = build_keyword_plan(
+        "Java engineer",
+        "Java Python Airflow",
+        require_all=True,
+    )
+
+    assert plan.supported == ["Java", "Python", "Airflow"]
+    assert plan.unsupported == []
+
+
+def test_keyword_coverage_repair_adds_every_missing_term_once():
+    repaired = resume_keyword_plan.ensure_keyword_coverage(
+        "SUMMARY\nJava engineer\n\nTECHNICAL SKILLS\nLanguages: Java\n\nPROFESSIONAL EXPERIENCE",
+        ["Java", "Python", "Airflow"],
+    )
+
+    assert "Verified JD Keywords: Python, Airflow" in repaired
+    assert repaired.lower().count("python") == 1
+    assert resume_keyword_plan.ensure_keyword_coverage(
+        repaired, ["Java", "Python", "Airflow"]
+    ) == repaired
 
 
 def test_hash_is_stable_for_line_endings_and_outer_space():
