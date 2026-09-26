@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { createResumeLabProfile, exportCoverLetterDocx, exportResumeDocx, generateResumeLabCoverLetter, generateResumeLabResume, getJob, getJobs, getResumeLabGaps, getResumeLabProfiles, parseResume, rebuildResume, refineResumeLabResume, resumeLabModelChoices, removeResumeLabResume, saveResumeLabResume } from "@/lib/api";
+import { createResumeLabProfile, exportCoverLetterDocx, exportResumeDocx, generateResumeLabCoverLetter, generateResumeLabResume, getJob, getJobs, getResumeLabProfiles, parseResume, rebuildResume, refineResumeLabResume, resumeLabModelChoices, removeResumeLabResume, saveResumeLabResume } from "@/lib/api";
 import { loadProfiles } from "@/lib/job-profiles";
 import type { ResumeGenerationMode, ResumeGenerationSpeed, ResumeLabProfile, ResumeLabRunResult, ResumeRebuildResult } from "@/types/job";
 
@@ -510,6 +510,7 @@ export default function ResumeLabPage() {
   const [profileId, setProfileId] = useState<number | null>(null);
   const [resumeText, setResumeText] = useState("");
   const [jobDescription, setJobDescription] = useState("");
+  const [confirmAllKeywords, setConfirmAllKeywords] = useState(false);
   const [jobContext, setJobContext] = useState("No job selected");
   const [jobTitle, setJobTitle] = useState("");
   const [jobCompany, setJobCompany] = useState("");
@@ -543,6 +544,10 @@ export default function ResumeLabPage() {
       setAtsBefore(after); // ponytail: no "before" for preloaded — set equal so no drop warning
     }
   }, [rebuildResult, jobDescription, atsAfter]);
+
+  useEffect(() => {
+    setConfirmAllKeywords(false);
+  }, [jobDescription]);
 
   const [showPreview, setShowPreview] = useState(true);
   const [docxLoading, setDocxLoading] = useState(false);
@@ -839,6 +844,7 @@ export default function ResumeLabPage() {
         target_title: jobTitle || null,
         company_name: jobCompany || null,
         idempotency_key: crypto.randomUUID(),
+        confirm_all_jd_keywords: true,
       });
       setGenerationRun(run);
       if (run.status !== "REVIEWED" || !run.resume_text) {
@@ -878,6 +884,10 @@ export default function ResumeLabPage() {
       toast.error("Add a job description first");
       return;
     }
+    if (!confirmAllKeywords) {
+      toast.error("Confirm that every JD keyword reflects your knowledge or experience");
+      return;
+    }
     if (!activeProfile) {
       toast.error("Select a profile first");
       return;
@@ -885,25 +895,6 @@ export default function ResumeLabPage() {
     if (resumeText.trim() !== (activeProfile.resume_text ?? "").trim()) {
       toast.error("Save the edited resume before generating");
       return;
-    }
-    setRebuildLoading(true);
-    try {
-      const gaps = await getResumeLabGaps({
-        profile_id: activeProfile.id,
-        source_version: activeProfile.source_version,
-        job_description: jobDescription,
-        target_title: jobTitle || null,
-      });
-      if (gaps.missing_keywords.length) {
-        setMissingKeywords(gaps.missing_keywords);
-        setCheckpointOpen(true);
-        return;
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not check missing keywords");
-      return;
-    } finally {
-      setRebuildLoading(false);
     }
     await startGeneration(activeProfile);
   }
@@ -1285,7 +1276,16 @@ export default function ResumeLabPage() {
                   Every employer, title and date is kept. Shorter targets condense older roles first.
                 </p>
               </div>
-              <Button onClick={rebuildTailoredResume} disabled={rebuildLoading}>
+              <label className="flex w-full items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-primary"
+                  checked={confirmAllKeywords}
+                  onChange={(event) => setConfirmAllKeywords(event.target.checked)}
+                />
+                <span>I confirm every detected JD keyword reflects my real knowledge or experience.</span>
+              </label>
+              <Button onClick={rebuildTailoredResume} disabled={rebuildLoading || !confirmAllKeywords}>
                 {rebuildLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                 Generate Resume
               </Button>
@@ -1299,7 +1299,7 @@ export default function ResumeLabPage() {
           <CardHeader>
             <CardTitle>AI rebuilt resume</CardTitle>
             <CardDescription>
-              Reviewed, truth-checked, and repaired toward an internal 85% ATS target.
+              Reviewed, truth-checked, and completed only at 100% detected JD keyword coverage.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

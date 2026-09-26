@@ -204,6 +204,7 @@ export function generateResumeLabResume(payload: {
   target_pages?: number | null;
   job_description: string; target_title?: string | null;
   company_name?: string | null; idempotency_key: string;
+  confirm_all_jd_keywords: true;
 }) {
   return request<ResumeLabRunResult>("/resume-lab/generate", {
     method: "POST", body: JSON.stringify(payload),
